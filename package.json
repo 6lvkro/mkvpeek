@@ -1,0 +1,68 @@
+{
+  "name": "mkvpeek",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Matroska tracks, container info and subtitle text with no ffmpeg, no native module, and a fraction of the file read",
+  "keywords": [
+    "matroska",
+    "mkv",
+    "demux",
+    "ebml",
+    "subtitles",
+    "ass",
+    "ssa",
+    "srt",
+    "vtt",
+    "webvtt",
+    "ffmpeg",
+    "ffprobe"
+  ],
+  "author": "6lvkro",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/6lvkro/mkvpeek.git"
+  },
+  "bugs": {
+    "url": "https://github.com/6lvkro/mkvpeek/issues"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./dist/browser.d.ts",
+        "default": "./dist/browser.js"
+      },
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.1"
+  },
+  "scripts": {
+    "build": "tsx build.ts",
+    "lint": "biome check --error-on-warnings . && tsc -p tsconfig.json",
+    "format": "biome check --write .",
+    "check:package": "publint --strict && attw --pack . --profile esm-only",
+    "prepublishOnly": "pnpm run lint && pnpm run build && pnpm run check:package"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@biomejs/biome": "^2.5.12",
+    "@types/node": "^22.20.1",
+    "publint": "^0.3.24",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@12.3.4"
+}
