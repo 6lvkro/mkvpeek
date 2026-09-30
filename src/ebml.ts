@@ -121,6 +121,7 @@ export const ID = {
   },
   cue: {
     POINT: 0xbb,
+    TIME: 0xb3,
     TRACK_POSITIONS: 0xb7,
     TRACK: 0xf7,
     CLUSTER_POSITION: 0xf1,

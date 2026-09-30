@@ -24,6 +24,14 @@ interface ClaimedFrame {
   frame: Frame;
 }
 
+interface BlockHead {
+  track: number;
+  relTicks: number;
+  laced: boolean;
+  payloadAt: number;
+  payloadSize: number;
+}
+
 /** The definitions that name which rule stood at a refusal. */
 export const BLOCK_REFUSAL = {
   notThisTrack: "not-this-track",
@@ -110,12 +118,15 @@ export async function frameIn(
   return { track: head.track, frame };
 }
 
-interface BlockHead {
-  track: number;
-  relTicks: number;
-  laced: boolean;
-  payloadAt: number;
-  payloadSize: number;
+export function heldBlockHead(window: Window, outer: Element): BlockHead | null {
+  let block = outer;
+  if (outer.id === E.ID.cluster.BLOCK_GROUP) {
+    const first = E.readElement(window, outer.body);
+    if (!E.fits(first, outer.next) || first.id !== E.ID.blockGroup.BLOCK) return null;
+    block = first;
+  }
+  const head = readBlockHead(window, block.body, block.size);
+  return typeof head === "string" ? null : head;
 }
 
 interface FrameFields {

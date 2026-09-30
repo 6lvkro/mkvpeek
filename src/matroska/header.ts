@@ -40,6 +40,7 @@ export interface TrackEntry {
 export interface CuePosition {
   clusterPos: number;
   relPos: number;
+  ticks: number | null;
 }
 
 /** @see {@linkcode readContainer|readContainer(source, "tracks")} */
@@ -361,6 +362,20 @@ function parseCues(
     cursor.next = cursor.body + E.vintValue(bytes, sizeStart, sizeLength, "size");
     if (cursor.next > end) throw new E.GrammarError();
   };
+  const cursorUint = () => {
+    const size = cursor.next - cursor.body;
+    const start = startOf(cursor.body, size);
+    return E.uintFits(size) ? E.uintAt(bytes, start, size) : null;
+  };
+  const pointTicks = (body: number, next: number) => {
+    let fieldAt = body;
+    while (fieldAt < next) {
+      readElementHead(fieldAt, next);
+      if (cursor.id === E.ID.cue.TIME) return cursorUint();
+      fieldAt = cursor.next;
+    }
+    return null;
+  };
   const end = cues.body + cues.size;
   let at = cues.body;
   while (at < end) {
@@ -369,6 +384,7 @@ function parseCues(
     const pointBody = cursor.body;
     const pointNext = cursor.next;
     if (pointId === E.ID.cue.POINT) {
+      const ticks = pointTicks(pointBody, pointNext);
       let fieldAt = pointBody;
       while (fieldAt < pointNext) {
         readElementHead(fieldAt, pointNext);
@@ -383,9 +399,7 @@ function parseCues(
           while (itemAt < fieldNext) {
             readElementHead(itemAt, fieldNext);
             const itemId = cursor.id;
-            const size = cursor.next - cursor.body;
-            const start = startOf(cursor.body, size);
-            const value = E.uintFits(size) ? E.uintAt(bytes, start, size) : null;
+            const value = cursorUint();
             if (itemId === E.ID.cue.TRACK) {
               track = value;
             } else if (itemId === E.ID.cue.CLUSTER_POSITION) {
@@ -396,7 +410,7 @@ function parseCues(
             itemAt = cursor.next;
           }
           if (track === null || clusterPos === null || relPos === null) return null;
-          const entry: CuePosition = { clusterPos: segment.body + clusterPos, relPos };
+          const entry: CuePosition = { clusterPos: segment.body + clusterPos, relPos, ticks };
           const list = byTrack.get(track);
           if (list === undefined) byTrack.set(track, [entry]);
           else list.push(entry);
