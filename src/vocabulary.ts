@@ -29,6 +29,7 @@ export interface Attachment {
   fileName: string | null;
   mimeType: string | null;
   description: string | null;
+  at: number | null;
   size: number;
   uid: string | null;
 }

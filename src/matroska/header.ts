@@ -572,9 +572,17 @@ async function readAttachedFile(
   fileEl: Element,
   held: Window,
 ): Promise<{ file: Attachment; window: Window } | null> {
-  const out: Attachment = { fileName: null, mimeType: null, description: null, size: 0, uid: null };
+  const out: Attachment = {
+    fileName: null,
+    mimeType: null,
+    description: null,
+    at: null,
+    size: 0,
+    uid: null,
+  };
   const visit: Visit = async (at, field, carried) => {
     if (field.id === E.ID.attachment.FILE_DATA) {
+      out.at = field.body;
       out.size = field.size;
       return carried;
     }
