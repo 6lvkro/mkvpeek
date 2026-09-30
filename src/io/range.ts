@@ -1,12 +1,4 @@
-import {
-  abortReason,
-  available,
-  HEAD_BYTES,
-  lend,
-  onAbort,
-  type Source,
-  stopIfAborted,
-} from "./source.js";
+import { abortReason, available, HEAD_BYTES, lend, onAbort, type Source } from "./source.js";
 
 export interface RangeReply {
   status: number;
@@ -27,44 +19,43 @@ export interface RangeOptions {
   /**
    * How long the source may deliver nothing before the read is refused.
    *
-   * Unset, a socket that has gone quiet waits until {@linkcode signal} cuts it.
+   * Unset, a socket that has gone quiet waits until the peek's `signal` cuts it.
    */
   stallMs?: number | null;
+  /**
+   * Cuts every request this source makes, beside the signal of the call that makes it.
+   *
+   * @deprecated Pass the peek's own `signal`, which cuts every request that peek makes. Removed in 0.2.0.
+   */
   signal?: AbortSignal | undefined;
 }
 
 export const bytesRange = (from: number, to: number): string =>
   `bytes=${String(from)}-${String(to)}`;
 
-export async function rangeSource(
+export function rangeSource(
   url: string,
   transport: OwnedTransport,
   { stallMs, signal }: RangeOptions,
-): Promise<Source> {
+): Source {
   const stall =
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
       ? stallMs
       : null;
-  const invariants: TransportInvariants = {
-    url,
-    transport,
-    stallMs: stall,
-    signal: signal ?? undefined,
-  };
+  // A source whose own signal has already fired refuses at the open,
+  // before it asks the server anything.
+  const stopped = abortReason(signal);
+  if (stopped !== null) throw stopped;
+  const invariants: TransportInvariants = { url, transport, stallMs: stall, signal };
   const { dispose } = transport;
-  let headRead: HeadRead;
-  try {
-    stopIfAborted(signal);
-    headRead = await readHead(invariants);
-  } catch (error) {
-    try {
-      dispose?.();
-    } catch {}
-    throw error;
-  }
-  const { total, head } = headRead;
-  const size = () => Promise.resolve(total);
-  const read = async (at: number, length: number, into?: Uint8Array) => {
+  let bought: HeadRead | null = null;
+  const headFor = async (signal: AbortSignal | undefined): Promise<HeadRead> => {
+    bought ??= await readHead(invariants, signal);
+    return bought;
+  };
+  const size = async (signal?: AbortSignal) => (await headFor(signal)).total;
+  const read = async (at: number, length: number, into?: Uint8Array, signal?: AbortSignal) => {
+    const { total, head } = await headFor(signal);
     const bounded = available(at, length, total);
     if (bounded === 0) return new Uint8Array(0);
     const borrowed = lend(into, bounded);
@@ -78,10 +69,10 @@ export async function rangeSource(
       const out = borrowed ?? new Uint8Array(bounded);
       out.set(head.subarray(at, head.length));
       const room = out.subarray(fromHead);
-      const tail = await readOverRanges(invariants, head.length, bounded - fromHead, room);
+      const tail = await readOverRanges(invariants, head.length, bounded - fromHead, room, signal);
       return out.subarray(0, fromHead + tail.length);
     }
-    return readOverRanges(invariants, at, bounded, borrowed);
+    return readOverRanges(invariants, at, bounded, borrowed, signal);
   };
 
   return {
@@ -154,8 +145,11 @@ async function requestRange(
   return { ...reply, total, body };
 }
 
-async function readHead(invariants: TransportInvariants): Promise<HeadRead> {
-  const dog = watchdog(invariants.url, invariants.stallMs, invariants.signal);
+async function readHead(
+  invariants: TransportInvariants,
+  signal: AbortSignal | undefined,
+): Promise<HeadRead> {
+  const dog = watchdog(invariants.url, invariants.stallMs, [invariants.signal, signal]);
   try {
     const first = await requestRange(invariants, dog, 0, HEAD_BYTES - 1);
     const into = new Uint8Array(available(0, HEAD_BYTES, first.total));
@@ -170,12 +164,13 @@ async function readOverRanges(
   invariants: TransportInvariants,
   at: number,
   bounded: number,
-  into: Uint8Array | null = null,
+  into: Uint8Array | null,
+  signal: AbortSignal | undefined,
 ): Promise<Uint8Array> {
   const out = into ?? new Uint8Array(bounded);
   let written = 0;
   let rounds = 0;
-  const dog = watchdog(invariants.url, invariants.stallMs, invariants.signal);
+  const dog = watchdog(invariants.url, invariants.stallMs, [invariants.signal, signal]);
   try {
     while (written < bounded) {
       rounds += 1;
@@ -252,11 +247,18 @@ async function* watched(
   }
 }
 
-function watchdog(url: string, stallMs: number | null, caller: AbortSignal | undefined): Watchdog {
-  if (stallMs === null) return { signal: caller, alive: () => {}, off: () => {} };
+function watchdog(
+  url: string,
+  stallMs: number | null,
+  callers: ReadonlyArray<AbortSignal | undefined>,
+): Watchdog {
+  const held = callers.filter((caller) => caller !== undefined);
+  if (stallMs === null && held.length < 2)
+    return { signal: held[0], alive: () => {}, off: () => {} };
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const alive = () => {
+    if (stallMs === null) return;
     clearTimeout(timer);
     const stall = () => {
       const silent = new Error(`${url} sent nothing for ${String(stallMs)}ms`);
@@ -265,11 +267,10 @@ function watchdog(url: string, stallMs: number | null, caller: AbortSignal | und
     timer = setTimeout(stall, stallMs);
   };
   alive();
-  const forward = () => controller.abort(caller?.reason);
-  const unhook = onAbort(caller, forward);
+  const unhooks = held.map((caller) => onAbort(caller, () => controller.abort(caller.reason)));
   const off = () => {
     clearTimeout(timer);
-    unhook();
+    for (const unhook of unhooks) unhook();
   };
   return { signal: controller.signal, alive, off };
 }

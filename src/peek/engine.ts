@@ -5,7 +5,7 @@
  */
 
 import * as E from "../ebml.js";
-import { abortReason, type Source, stopIfAborted } from "../io/source.js";
+import { abortReason, type Source } from "../io/source.js";
 import { readContainer, type TracksHeader } from "../matroska/header.js";
 import type { Track } from "../tracks/core.js";
 import { allTracks, type ListedTrack } from "../tracks/list.js";
@@ -43,7 +43,6 @@ export async function fromHeader<T extends Track>(
   const wants = wantsOf(options);
   const absentAnswer = absent(wants);
   try {
-    stopIfAborted(options.signal);
     const readOptions = { ...wants, signal: options.signal };
     const header = await readContainer(source, "tracks", readOptions);
     if (typeof header === "string") return refused(header, absentAnswer);

@@ -43,9 +43,13 @@ export interface SubtitleOptions extends PeekOptions, SubtitleTuning {
   text?: boolean;
   via?: SubtitleVia;
   /**
+   * Nothing arrives after {@linkcode PeekOptions.signal} aborts,
+   * so a bar drawn from here stops where the caller stopped.
+   *
    * @example
    * await peekSubtitles(path, {
-   *   onProgress: ({ done, total, finder }) => bar.set(finder, done / total),
+   *   onProgress: ({ doneBytes, totalBytes, finder }) =>
+   *     bar.set(finder, doneBytes / totalBytes),
    * });
    *
    * @example
@@ -55,7 +59,7 @@ export interface SubtitleOptions extends PeekOptions, SubtitleTuning {
    * await peekSubtitles(path, {
    *   via: "both",
    *   signal: stop.signal,
-   *   onProgress: (p) => { if (p.total > most[p.finder]) stop.abort(); },
+   *   onProgress: (p) => { if (p.totalBytes > most[p.finder]) stop.abort(); },
    * });
    */
   onProgress?: (progress: SubtitleProgress) => void;

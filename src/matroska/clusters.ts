@@ -36,7 +36,7 @@ export async function walkFrames(
   const slotBytes = Math.min(knobs.blockAheadBytes, fileSize);
   const pool = windowPool(slotBytes, knobs.concurrency + 4);
   const sized = { source: pass.source, fileSize };
-  const walk: WalkInvariants = { sized, tracks, knobs, head: pass.head };
+  const walk: WalkInvariants = { sized, tracks, knobs, head: pass.head, signal };
   let done = 0;
   let refused = false;
   const walked = new Map<number, Map<number, Frame[]>>();
@@ -45,6 +45,7 @@ export async function walkFrames(
     span: ClusterSpan,
     outcome: SweptFrames | BlockClause,
   ): outcome is SweptFrames => {
+    stopIfAborted(signal);
     if (typeof outcome === "string") {
       refused = true;
       return false;
@@ -122,6 +123,7 @@ export async function walkFrames(
   stopIfAborted(signal);
   if (refused || count === 0) return null;
   onProgress(fileSize, fileSize);
+  stopIfAborted(signal);
   return merged(walked);
 }
 
@@ -131,6 +133,7 @@ interface WalkInvariants {
   tracks: ReadonlyMap<number, boolean>;
   knobs: WalkFetch;
   head: Window;
+  signal: AbortSignal | undefined;
 }
 
 /**
@@ -219,7 +222,7 @@ function releaseAll(ledger: Set<Loaned>, swallow: boolean): void {
 }
 
 async function walkSpan(
-  { sized, tracks, knobs, head }: WalkInvariants,
+  { sized, tracks, knobs, head, signal }: WalkInvariants,
   span: ClusterSpan,
   { pool, ledger }: Loans,
   seed?: Loaned,
@@ -234,10 +237,10 @@ async function walkSpan(
     const bounded = available(at, width, sized.fileSize);
     if (E.covers(head, at, bounded)) return head;
     const lease = pool.borrow(width);
-    if (lease === null) return windowAt(sized, at, width);
+    if (lease === null) return windowAt(sized, at, width, signal);
     let window: Window;
     try {
-      window = await windowAt(sized, at, width, lease.bytes);
+      window = await windowAt(sized, at, width, signal, lease.bytes);
     } catch (error) {
       lease.release();
       throw error;

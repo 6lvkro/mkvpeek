@@ -1,7 +1,7 @@
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
 import { gathered } from "../io/lanes.js";
-import { HEAD_BYTES, type Source } from "../io/source.js";
+import { HEAD_BYTES, type Source, stopIfAborted } from "../io/source.js";
 import { windowAt } from "../io/windows.js";
 import type {
   Attachment,
@@ -220,9 +220,10 @@ async function openContainer(
   source: Source,
   signal: AbortSignal | undefined,
 ): Promise<Opened | RefusalCode> {
-  const fileSize = await source.size();
+  stopIfAborted(signal);
+  const fileSize = await source.size(signal);
   // A short answer throws here and reaches the fold.
-  const head = await windowAt({ source, fileSize }, 0, HEAD_BYTES);
+  const head = await windowAt({ source, fileSize }, 0, HEAD_BYTES, signal);
 
   const ebml = E.readElement(head, 0);
   if (!readsAs(ebml, E.ID.root.EBML)) return "not-matroska";

@@ -54,8 +54,8 @@ export function peekTracks(
   return overTarget(target, options, peekTracksFrom, viaPath);
 }
 
-const viaPath: Opener = async (target, signal) => {
-  if (isHttpUrl(target)) return urlSource(target, { signal });
+const viaPath: Opener = async (target) => {
+  if (isHttpUrl(target)) return urlSource(target);
   if (namesAuthority(target)) {
     const parsed = URL.parse(target);
     if (parsed !== null) {

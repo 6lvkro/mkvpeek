@@ -15,6 +15,7 @@ import {
   type Range,
   type SizedSource,
   type Source,
+  stopIfAborted,
 } from "./source.js";
 
 /** The window buffers the walk reuses. */
@@ -88,7 +89,7 @@ export async function fetchSpans(
   concurrency: number,
   signal?: AbortSignal,
 ): Promise<Window[]> {
-  const windowFor = (span: Range) => windowAt(sized, span.at, span.length);
+  const windowFor = (span: Range) => windowAt(sized, span.at, span.length, signal);
   return inParallel(spans, concurrency, windowFor, signal);
 }
 
@@ -142,20 +143,24 @@ export async function windowOver(
   at: number,
   length: number,
   held: Window,
+  signal: AbortSignal | undefined,
 ): Promise<Window> {
   const need = available(at, length, held.fileSize);
   if (E.covers(held, at, need)) return held;
   const heldSource = { source, fileSize: held.fileSize };
-  return windowAt(heldSource, at, length);
+  return windowAt(heldSource, at, length, signal);
 }
 
+/** The one place a `Source` is read. */
 export async function windowAt(
   { source, fileSize }: SizedSource,
   at: number,
   length: number,
+  signal: AbortSignal | undefined,
   into?: Uint8Array,
 ): Promise<Window> {
-  const bytes = await source.read(at, length, into);
+  stopIfAborted(signal);
+  const bytes = await source.read(at, length, into, signal);
   const expected = available(at, length, fileSize);
   if (bytes.length < expected) throw new Error();
   return { at, bytes, fileSize };

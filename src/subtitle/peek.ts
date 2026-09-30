@@ -1,5 +1,5 @@
-import type { IndexFetch, ReportBytes, Source, WalkFetch, Watch } from "../io/source.js";
-import { abortReason } from "../io/source.js";
+import type { IndexFetch, Source, WalkFetch, Watch } from "../io/source.js";
+import { watchOver } from "../io/source.js";
 import { type IndexedHeader, readContainer, type TimedHeader } from "../matroska/header.js";
 import { absent, answerOf, type PeekOutcome, refused, served, wantsOf } from "../peek/contract.js";
 import { fromHeader, thrownRefusal } from "../peek/engine.js";
@@ -98,15 +98,6 @@ const tracksWith = (
     return { ...track, text: body, servedBy: body === null ? null : servedBy };
   });
 
-function reporter(listener: SubtitleOptions["onProgress"], finder: SubtitleFinder): ReportBytes {
-  if (listener === undefined) return () => {};
-  return (doneBytes, totalBytes) => {
-    try {
-      listener({ finder, doneBytes, totalBytes });
-    } catch {}
-  };
-}
-
 async function attempt<H extends TimedHeader, F extends { concurrency: number }>(
   source: Source,
   options: SubtitleOptions,
@@ -116,8 +107,10 @@ async function attempt<H extends TimedHeader, F extends { concurrency: number }>
   carried: H | null = null,
 ): Promise<Attempt> {
   const signal = options.signal;
-  if (abortReason(signal) !== null) return stopped(carried);
-  const watch = { onProgress: reporter(options.onProgress, route.finder), signal };
+  const listener = options.onProgress;
+  const watch = watchOver(signal, (doneBytes, totalBytes) =>
+    listener?.({ finder: route.finder, doneBytes, totalBytes }),
+  );
   const knobs = route.knobsFor(source, options);
   const header =
     carried ??
@@ -125,7 +118,6 @@ async function attempt<H extends TimedHeader, F extends { concurrency: number }>
       .open(source, wants, knobs.concurrency, signal)
       .catch((error: unknown) => thrownRefusal(error, "malformed", signal)));
   if (typeof header === "string") return { refusal: header, header: null };
-  if (abortReason(signal) !== null) return stopped(header);
   const listed = tracksWith(header, null, null);
   if (listed.every((track) => track.unsupported !== null)) {
     return { refusal: null, header, tracks: listed };
@@ -147,11 +139,4 @@ function enveloped(tried: Attempt, wants: Wants): PeekOutcome<SubtitleTrack> {
   const answer = answerOf(tried.header, tried.tracks, wants);
   if (tried.refusal === null) return served(answer);
   return refused(tried.refusal, answer);
-}
-
-function stopped(header: TimedHeader | null): Attempt {
-  const refusal = "cancelled";
-  if (header === null) return { refusal, header: null };
-  const tracks = tracksWith(header, null, null);
-  return { refusal, header, tracks };
 }

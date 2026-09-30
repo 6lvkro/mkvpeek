@@ -7,7 +7,12 @@
  * - a buffer already in memory
  */
 export interface Source {
-  size(): Promise<number>;
+  /**
+   * The length in bytes.
+   *
+   * @param signal The reading peek's own, for a source that has to fetch to know.
+   */
+  size(signal?: AbortSignal): Promise<number>;
   /**
    * Returns as much as was asked for.
    *
@@ -18,8 +23,10 @@ export interface Source {
    * either way the returned view is the truth.
    * Touching it again after resolve breaks the contract,
    * and a late write changes the bytes of whoever holds the borrowed window.
+   *
+   * @param signal The reading peek's own, for a source that can cut a read in flight.
    */
-  read(at: number, length: number, into?: Uint8Array): Promise<Uint8Array>;
+  read(at: number, length: number, into?: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>;
   close?(): Promise<void>;
   trip?: Trip;
 }
@@ -78,12 +85,12 @@ export interface WalkFetch {
   concurrency: number;
 }
 
-export type ReportBytes = (done: number, total: number) => void;
-
 export interface Watch {
   onProgress: ReportBytes;
   signal: AbortSignal | undefined;
 }
+
+type ReportBytes = (done: number, total: number) => void;
 
 /**
  * How much the opening read fetches.
@@ -117,6 +124,18 @@ export function abortReason(signal: AbortSignal | undefined): Error | null {
 export function stopIfAborted(signal: AbortSignal | undefined): void {
   const stopped = abortReason(signal);
   if (stopped !== null) throw stopped;
+}
+
+/** A Watch whose report cannot end the read by throwing. */
+export function watchOver(signal: AbortSignal | undefined, report: ReportBytes): Watch {
+  const onProgress: ReportBytes = (done, total) => {
+    let returned: unknown;
+    try {
+      returned = report(done, total);
+    } catch {}
+    if (returned instanceof Promise) returned.catch(() => {});
+  };
+  return { onProgress, signal };
 }
 
 export function available(at: number, length: number, size: number): number {

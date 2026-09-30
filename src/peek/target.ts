@@ -8,10 +8,7 @@ import { absent, type PeekOptions, type PeekOutcome, refused, wantsOf } from "./
 /** A path (Node) or URL string, bytes in hand, or a {@linkcode Source} opened by the caller. */
 export type Target = Source | ArrayBufferView | ArrayBuffer | string;
 
-export type Opener = (
-  target: string,
-  signal: AbortSignal | undefined,
-) => Promise<Source | RefusalCode>;
+export type Opener = (target: string) => Promise<Source | RefusalCode>;
 
 type Work<T extends Track, O extends PeekOptions> = (
   source: Source,
@@ -54,7 +51,7 @@ export async function overTarget<T extends Track, O extends PeekOptions>(
   }
   let source: Source | RefusalCode;
   try {
-    source = await open(target, options.signal);
+    source = await open(target);
   } catch {
     if (abortReason(options.signal) !== null) return refused("cancelled", absentAnswer);
     return refused("source-failed", absentAnswer);
@@ -67,8 +64,8 @@ export async function overTarget<T extends Track, O extends PeekOptions>(
   }
 }
 
-const viaUrl: Opener = async (target, signal) => {
+const viaUrl: Opener = async (target) => {
   const parsed = URL.parse(target);
   if (parsed === null) return "invalid-target";
-  return urlRefusal(parsed) ?? urlSource(target, { signal });
+  return urlRefusal(parsed) ?? urlSource(target);
 };

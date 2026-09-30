@@ -1,6 +1,6 @@
 import type { Element, OpenElement, Window } from "../ebml.js";
 import * as E from "../ebml.js";
-import { type Source, stopIfAborted } from "../io/source.js";
+import type { Source } from "../io/source.js";
 import { windowOver } from "../io/windows.js";
 
 export interface Segment {
@@ -48,19 +48,13 @@ export const pastSegment = (el: Element, segment: Segment): boolean => el.next >
 export const headerNeed = (at: number, end: number): number =>
   Math.min(ELEMENT_HEADER_BYTES, end - at);
 
-/**
- * The one door for reads past the head.
- *
- * The signal is asked here and nowhere else.
- */
 export function readPastHead(
   pass: SegmentPass,
   at: number,
   length: number,
   held: Window,
 ): Promise<Window> {
-  stopIfAborted(pass.signal);
-  return windowOver(pass.source, at, length, held);
+  return windowOver(pass.source, at, length, held, pass.signal);
 }
 
 export async function* hopTopLevel(
