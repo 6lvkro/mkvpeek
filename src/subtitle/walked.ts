@@ -29,7 +29,7 @@ export async function readByWalk(
     const events = frames.map((frame) => eventOf(frame, timeline));
     const assembled = assembleTrack(track, events, "whole");
     if (typeof assembled === "string") return assembled;
-    out.set(track.streamIndex, assembled.text);
+    out.set(track.index, assembled.text);
   }
   return out;
 }

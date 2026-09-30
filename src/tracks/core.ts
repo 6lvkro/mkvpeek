@@ -33,28 +33,21 @@ export interface Track<T extends TrackType = TrackType> {
   tags: TrackTag[];
 }
 
-export const kindOf = (track: TrackEntry): TrackType => KIND_BY_TYPE.get(track.type) ?? "unknown";
+export const kindOf = (track: TrackEntry): TrackType =>
+  KIND_BY_TYPE_CODE.get(track.typeCode) ?? "unknown";
 
 export const trackCore = <T extends TrackType>(
-  track: TrackEntry,
+  { typeCode, codecPrivate, encoded, ...stated }: TrackEntry,
   header: TracksHeader,
   type: T,
 ): Track<T> => ({
-  type: type,
-  index: track.streamIndex,
-  number: track.number,
-  uid: track.uid,
-  codecId: track.codecId,
-  language: track.language,
-  languageIetf: track.languageIetf,
-  name: track.name,
-  flags: { ...track.flags },
-  codecDelayNs: track.codecDelayNs,
+  type,
+  ...stated,
   tags:
-    track.uid === null ? [] : (header.trackTags.get(track.uid) ?? []).map((tag) => ({ ...tag })),
+    stated.uid === null ? [] : (header.trackTags.get(stated.uid) ?? []).map((tag) => ({ ...tag })),
 });
 
-const KIND_BY_TYPE: ReadonlyMap<number, TrackType> = new Map([
+const KIND_BY_TYPE_CODE: ReadonlyMap<number, TrackType> = new Map([
   [1, "video"],
   [2, "audio"],
   [3, "complex"],

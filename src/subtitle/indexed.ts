@@ -43,7 +43,7 @@ export async function readByIndex(
     const vouched = anchorless(events) ? "may-be-short" : "whole";
     const assembled = assembleTrack(track, events, vouched);
     if (typeof assembled === "string") return assembled;
-    out.set(track.streamIndex, assembled.text);
+    out.set(track.index, assembled.text);
   }
   return out;
 }

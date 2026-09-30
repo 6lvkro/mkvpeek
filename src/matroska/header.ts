@@ -23,17 +23,17 @@ import {
 } from "./chain.js";
 
 export interface TrackEntry {
-  streamIndex: number;
+  index: number;
   number: number;
   uid: string | null;
+  typeCode: number;
   codecId: string;
   codecPrivate: string;
-  codecDelayNs: number;
-  type: number;
   language: string | null;
   languageIetf: string | null;
   name: string | null;
   flags: TrackFlags;
+  codecDelayNs: number;
   encoded: boolean;
 }
 
@@ -441,17 +441,16 @@ async function fetchElement(
 function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCode {
   const entries: TrackEntry[] = [];
   const numbers = new Set<number>();
-  let streamIndex = 0;
+  let index = 0;
   for (const entry of E.children(window, tracks.body, tracks.size)) {
     if (entry.id !== E.ID.track.ENTRY) continue;
     const track: TrackEntry = {
-      streamIndex: streamIndex++,
+      index: index++,
       number: -1,
       uid: null,
+      typeCode: -1,
       codecId: "",
       codecPrivate: "",
-      codecDelayNs: 0,
-      type: -1,
       language: null,
       languageIetf: null,
       name: null,
@@ -465,6 +464,7 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
         original: null,
         commentary: null,
       },
+      codecDelayNs: 0,
       encoded: false,
     };
     for (const field of E.children(window, entry.body, entry.size)) {
@@ -476,9 +476,9 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
       } else if (id === E.ID.track.UID) {
         track.uid = E.readUid(window, field);
       } else if (id === E.ID.track.TYPE) {
-        const type = E.readUint(window, field);
-        if (type === null) return "malformed";
-        track.type = type;
+        const typeCode = E.readUint(window, field);
+        if (typeCode === null) return "malformed";
+        track.typeCode = typeCode;
       } else if (id === E.ID.track.CODEC_ID) {
         track.codecId = E.readAscii(window, field);
       } else if (id === E.ID.track.CODEC_PRIVATE) {
