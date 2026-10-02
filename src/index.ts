@@ -7,6 +7,7 @@
 export type {
   Attachment,
   ContainerInfo,
+  FetchKnobs,
   ListedTrack,
   PeekCode,
   PeekOptions,

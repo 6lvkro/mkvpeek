@@ -5,6 +5,7 @@ export { urlSource } from "./io/url.js";
 export type { PeekOptions, PeekOutcome } from "./peek/contract.js";
 export type { Target } from "./peek/target.js";
 export type {
+  FetchKnobs,
   SubtitleOptions,
   SubtitlePreset,
   SubtitleProgress,

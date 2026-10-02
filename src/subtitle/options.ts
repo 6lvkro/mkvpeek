@@ -2,6 +2,7 @@ import type { IndexFetch, WalkFetch } from "../io/source.js";
 import type { PeekOptions } from "../peek/contract.js";
 import type { SubtitleFinder } from "../vocabulary.js";
 
+/** Every knob `overrides` can set: the index path's and the walk's. */
 export type FetchKnobs = IndexFetch & WalkFetch;
 
 /** What a caller can say about the cost of a read. */
