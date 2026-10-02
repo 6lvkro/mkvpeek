@@ -39,7 +39,7 @@ export function assembleAss(codecPrivate: string, events: readonly Event[]): str
     body += `Dialogue: ${layer},${assTime(startCs)},${assTime(startCs + toCentiseconds(e.durationMs))},${middle},${text}\n`;
   }
   const separator = head.endsWith("\n") ? "" : "\r\n";
-  const written = `${head}${separator}${body === "" ? "\n" : body}${trailer}`;
+  const written = `${head}${separator}${body}${trailer}`;
   return written.endsWith("\n") ? written : `${written}\n`;
 }
 
@@ -56,7 +56,7 @@ export function assembleVtt(events: readonly Event[]): string {
     const head = id === "" ? "" : `${id}\n`;
     body += `\n${head}${at}${settings === "" ? "" : ` ${settings}`}\n${text}\n`;
   }
-  return `WEBVTT\n${body === "" ? "\n\n" : body}`;
+  return `WEBVTT\n${body}`;
 }
 
 export function assembleSrt(events: readonly Event[]): string {

@@ -144,6 +144,8 @@ function planFrames(
   for (const track of wanted) {
     const cues = header.cues.get(track.number);
     if (cues === undefined || cues.length === 0) {
+      // A track that says it has no frame, or one a damaged file relabelled away.
+      if (statedFrameCount(header, track) === 0) continue;
       return "unreadable";
     }
     if (repeatedPosition(cues)) {
