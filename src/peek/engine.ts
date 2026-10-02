@@ -30,9 +30,13 @@ export function thrownRefusal(
   grammarCode: "malformed" | "unreadable",
   signal: AbortSignal | undefined,
 ): RefusalCode {
-  if (abortReason(signal) !== null) return "cancelled";
-  if (!E.isGrammarError(error)) return "source-failed";
-  return grammarCode;
+  const reached = E.isGrammarError(error) ? grammarCode : "source-failed";
+  return returnedRefusal(reached, signal);
+}
+
+/** The refusal a read reached, or cancelled once its signal has fired: the caller stopped first. */
+export function returnedRefusal(code: RefusalCode, signal: AbortSignal | undefined): RefusalCode {
+  return abortReason(signal) !== null ? "cancelled" : code;
 }
 
 export async function fromHeader<T extends Track>(
@@ -45,7 +49,10 @@ export async function fromHeader<T extends Track>(
   try {
     const readOptions = { ...wants, signal: options.signal };
     const header = await readContainer(source, "tracks", readOptions);
-    if (typeof header === "string") return refused(header, absentAnswer);
+    if (typeof header === "string") {
+      const refusal = returnedRefusal(header, options.signal);
+      return refused(refusal, absentAnswer);
+    }
     const projected = projection(header);
     return served(answerOf(header, projected, wants));
   } catch (error) {
