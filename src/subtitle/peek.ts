@@ -1,8 +1,16 @@
+import {
+  absent,
+  answerOf,
+  type PeekOutcome,
+  refused,
+  served,
+  wantsOf,
+} from "../container/contract.js";
+import { fromHeader } from "../container/listing.js";
 import type { IndexFetch, Source, WalkFetch, Watch } from "../io/source.js";
 import { watchOver } from "../io/source.js";
 import { type IndexedHeader, readContainer, type TimedHeader } from "../matroska/header.js";
-import { absent, answerOf, type PeekOutcome, refused, served, wantsOf } from "../peek/contract.js";
-import { fromHeader, returnedRefusal, thrownRefusal } from "../peek/engine.js";
+import { refusalOf, returnedRefusal } from "../refusal.js";
 import type { SubtitleTrack } from "../tracks/subtitle.js";
 import { subtitleTracks } from "../tracks/subtitle.js";
 import type { RefusalCode, SubtitleFinder, Wants } from "../vocabulary.js";
@@ -116,7 +124,7 @@ async function attempt<H extends TimedHeader, F extends { concurrency: number }>
     carried ??
     (await route
       .open(source, wants, knobs.concurrency, signal)
-      .catch((error: unknown) => thrownRefusal(error, "malformed", signal)));
+      .catch((error: unknown) => refusalOf(error, signal)));
   if (typeof header === "string") return { refusal: returnedRefusal(header, signal), header: null };
   const listed = tracksWith(header, null, null);
   if (listed.every((track) => track.unsupported !== null)) {
@@ -130,7 +138,7 @@ async function attempt<H extends TimedHeader, F extends { concurrency: number }>
     const tracks = tracksWith(header, texts, route.finder);
     return { refusal: null, header, tracks };
   } catch (error) {
-    const refusal = thrownRefusal(error, "unreadable", signal);
+    const refusal = refusalOf(error, signal, "unreadable");
     return { refusal, header, tracks: listed };
   }
 }

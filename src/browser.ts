@@ -1,9 +1,9 @@
+export type { PeekOptions, PeekOutcome } from "./container/contract.js";
+export type { Target } from "./container/target.js";
 export { peekSubtitles, peekTracks } from "./entry/browser.js";
 export type { Source, Trip } from "./io/source.js";
 export type { UrlOptions } from "./io/url.js";
 export { urlSource } from "./io/url.js";
-export type { PeekOptions, PeekOutcome } from "./peek/contract.js";
-export type { Target } from "./peek/target.js";
 export type {
   FetchKnobs,
   SubtitleOptions,

@@ -6,10 +6,10 @@ import {
   BLOCK_REFUSAL,
   type BlockClause,
   type BytesSupply,
-  type Frame,
+  type ClaimedFrame,
+  type ClaimOf,
   frameIn,
   heldBlockHead,
-  type TrackClaim,
 } from "./block.js";
 import {
   CLUSTER_PROBE_BYTES,
@@ -49,30 +49,30 @@ interface LastCluster {
   window: Window;
 }
 
-export async function readFrame(
+export async function readFrame<C>(
   windows: WindowIndex,
   point: CuePosition,
   trackNumber: number,
-  numbered: boolean,
+  claim: C,
   memo: ClusterMemo = { last: null },
-): Promise<Frame | BlockClause> {
+): Promise<ClaimedFrame<C> | BlockClause> {
   const pointed = locateBlock(windows, point, memo);
   if (typeof pointed === "string") return pointed;
   const { clusterTime, window, outer } = pointed;
 
   if (clusterTime === null) return BLOCK_REFUSAL.noClusterTime;
 
-  return frameOfBlock(windows, outer, clusterTime, window, trackNumber, numbered);
+  return frameOfBlock(windows, outer, clusterTime, window, trackNumber, claim);
 }
 
-export function readCuedFrame(
+export function readCuedFrame<C>(
   windows: WindowIndex,
   cued: CuedBlock,
   trackNumber: number,
-  numbered: boolean,
-): Promise<Frame | BlockClause> {
+  claim: C,
+): Promise<ClaimedFrame<C> | BlockClause> {
   const { outer, clusterTicks, window } = cued;
-  return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, numbered);
+  return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, claim);
 }
 
 export function planRanges(points: readonly CuePosition[], cueAheadBytes: number): Range[] {
@@ -130,7 +130,7 @@ export function locateByCue(
     const outer = E.readElement(window, blockAt);
     if (!E.decoded(outer) || !FRAME_IDS.has(outer.id)) continue;
     const head = heldBlockHead(window, outer);
-    if (head === null || head.track !== trackNumber) continue;
+    if (head === null || head.trackNumber !== trackNumber) continue;
     if (found !== null) return null;
     found = { blockAt, outer, clusterBody, clusterTicks: ticks - head.relTicks, window };
   }
@@ -167,24 +167,23 @@ const restOfBlock = (windows: WindowIndex, blockAt: number, outer: Element): Ran
     ? { at: blockAt, length: outer.next - blockAt }
     : null;
 
-async function frameOfBlock(
+async function frameOfBlock<C>(
   windows: WindowIndex,
   outer: Element,
   clusterTicks: number,
   held: Window,
   trackNumber: number,
-  numbered: boolean,
-): Promise<Frame | BlockClause> {
-  const claim: TrackClaim = (track) => (track === trackNumber ? numbered : null);
+  claim: C,
+): Promise<ClaimedFrame<C> | BlockClause> {
+  const claimOf: ClaimOf<C> = (number) => (number === trackNumber ? claim : null);
   const supply: BytesSupply = (at, need) => {
     const window = windows.find(at, need);
     if (window === null) throw new E.GrammarError();
     return Promise.resolve(window);
   };
   try {
-    const claimed = await frameIn(outer, clusterTicks, held, claim, supply);
-    if (claimed === null) return BLOCK_REFUSAL.notThisTrack;
-    return typeof claimed === "string" ? claimed : claimed.frame;
+    const read = await frameIn(outer, clusterTicks, held, claimOf, supply);
+    return read ?? BLOCK_REFUSAL.notThisTrack;
   } catch (error) {
     if (!E.isGrammarError(error)) throw error;
     return BLOCK_REFUSAL.notFetched;

@@ -89,12 +89,12 @@ export async function readContainer(
   depth: "tracks" | "timed" | "indexed",
   { concurrency = 1, signal: stop, ...wants }: ContainerReadOptions,
 ): Promise<TracksHeader | TimedHeader | IndexedHeader | RefusalCode> {
-  const opened = await openContainer(source, stop);
+  const opened = await openSegment(source, stop);
   if (typeof opened === "string") return opened;
   const { segment } = opened;
   const noTags = new Map<string, TrackTag[]>();
   const noCues = new Map<number, CuePosition[]>();
-  const noInfo = emptyInfo();
+  const noInfo = defaultInfo();
   const noAttachments: Attachment[] = [];
   const parseCuesIn = (w: Window, el: Element) => parseCues(w, el, segment);
   // The timed depth fetches Info for its scale even when nobody asked for delivery.
@@ -137,7 +137,7 @@ interface Located extends SegmentPass {
   offsets: Map<number, number>;
 }
 
-interface Opened extends Located {
+interface OpenedSegment extends Located {
   headerSoFar: Omit<TracksHeader, "trackTags" | "info" | "attachments">;
 }
 
@@ -160,7 +160,7 @@ const MAX_HEADER_ELEMENT_BYTES = 64 * 1024 ** 2;
  */
 const MAX_ATTACHMENT_CHILDREN = 4096;
 
-const emptyInfo = (): ContainerInfo => ({
+const defaultInfo = (): ContainerInfo => ({
   title: null,
   muxingApp: null,
   writingApp: null,
@@ -217,10 +217,10 @@ function simpleTag(window: Window, { size, body }: Element): TrackTag {
   return { name: nulTrimmed(name), value: nulTrimmed(value) };
 }
 
-async function openContainer(
+async function openSegment(
   source: Source,
   signal: AbortSignal | undefined,
-): Promise<Opened | RefusalCode> {
+): Promise<OpenedSegment | RefusalCode> {
   stopIfAborted(signal);
   const fileSize = await source.size(signal);
   // A short answer throws here and reaches the fold.
@@ -560,7 +560,7 @@ async function eachChildIn(
   return window;
 }
 
-async function readAttachments(opened: Opened): Promise<Attachment[]> {
+async function readAttachments(opened: OpenedSegment): Promise<Attachment[]> {
   const at = opened.offsets.get(E.ID.segment.ATTACHMENTS);
   if (at === undefined) return [];
   const read = async (fallback: Attachment[]) => {
@@ -582,7 +582,7 @@ async function readAttachments(opened: Opened): Promise<Attachment[]> {
 }
 
 async function readAttachedFile(
-  opened: Opened,
+  opened: OpenedSegment,
   fileEl: Element,
   held: Window,
 ): Promise<{ file: Attachment; window: Window } | null> {
@@ -619,7 +619,7 @@ async function readAttachedFile(
 
 function parseInfo(window: Window, info: Element): ContainerInfo {
   const scale = parseTimestampScale(window, info);
-  const out: ContainerInfo = { ...emptyInfo(), timestampScale: scale };
+  const out: ContainerInfo = { ...defaultInfo(), timestampScale: scale };
   for (const field of E.children(window, info.body, info.size)) {
     const { id } = field;
     if (id === E.ID.info.TITLE) {

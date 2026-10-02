@@ -79,6 +79,17 @@ export type PeekCode = "served" | RefusalCode;
 /** The two paths of a subtitle read. */
 export type SubtitleFinder = "index" | "walk";
 
+/** A refusal thrown on the way to an answer, carrying the code that answer gives. */
+export class RefusalError extends Error {
+  readonly code: RefusalCode;
+
+  constructor(code: RefusalCode) {
+    super(code);
+    this.name = "RefusalError";
+    this.code = code;
+  }
+}
+
 /**
  * Whether the outcome is a refusal rather than a serve.
  *

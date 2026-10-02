@@ -11,17 +11,20 @@ export interface Timeline {
 }
 
 interface TickedFrame {
-  readOrder: number | null;
   startTicks: number;
   durationTicks: number | null;
-  payload: string;
+  payload: Uint8Array;
 }
 
-export const eventOf = (frame: TickedFrame, timeline: Timeline): Event => ({
-  readOrder: frame.readOrder,
+export const eventOf = (
+  frame: TickedFrame,
+  readOrder: number | null,
+  timeline: Timeline,
+): Event => ({
+  readOrder,
   startMs: frame.startTicks * timeline.msPerTick + timeline.shiftMs,
   durationMs: (frame.durationTicks ?? 0) * timeline.msPerTick,
-  payload: frame.payload,
+  payload: PAYLOAD_TEXT.decode(frame.payload),
 });
 
 export function assembleAss(codecPrivate: string, events: readonly Event[]): string {
@@ -96,6 +99,8 @@ const MS_PER_SECOND = 1000;
 const CS_PER_SECOND = 100;
 
 const LAST_ASS_CS = 10 * 3600 * CS_PER_SECOND - 1;
+
+const PAYLOAD_TEXT = new TextDecoder("utf-8", { ignoreBOM: true });
 
 const toCentiseconds = (ms: number): number => Math.round(ms / 10);
 

@@ -1,4 +1,12 @@
-import { abortReason, available, HEAD_BYTES, lend, onAbort, type Source } from "./source.js";
+import {
+  abortReason,
+  available,
+  HEAD_BYTES,
+  lend,
+  onAbort,
+  type Source,
+  stopIfAborted,
+} from "./source.js";
 
 export interface RangeReply {
   status: number;
@@ -44,8 +52,7 @@ export function rangeSource(
       : null;
   // A source whose own signal has already fired refuses at the open,
   // before it asks the server anything.
-  const stopped = abortReason(signal);
-  if (stopped !== null) throw stopped;
+  stopIfAborted(signal);
   const invariants: TransportInvariants = { url, transport, stallMs: stall, signal };
   const { dispose } = transport;
   let bought: HeadRead | null = null;

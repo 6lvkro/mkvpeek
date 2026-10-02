@@ -3,6 +3,7 @@ import { walkFrames } from "../matroska/clusters.js";
 import type { TimedHeader } from "../matroska/header.js";
 import { isNumbered, statedFrameCount } from "../tracks/subtitle.js";
 import type { RefusalCode } from "../vocabulary.js";
+import { readOrderOf } from "./ass.js";
 import { eventOf } from "./assemble.js";
 import { assembleTrack, planFrom, type TrackTexts } from "./conclude.js";
 
@@ -17,16 +18,20 @@ export async function readByWalk(
   const { wanted, timeline } = plan;
 
   const pass = { source, segment: header.segment, head: header.head, signal: watch.signal };
-  const numberedEntries = wanted.map((t) => [t.number, isNumbered(t)] as const);
-  const numberedByTrack = new Map(numberedEntries);
-  const framesByTrack = await walkFrames(pass, numberedByTrack, knobs, watch);
+  const claimEntries = wanted.map((track) => [track.number, track] as const);
+  const claims = new Map(claimEntries);
+  const framesByTrack = await walkFrames(pass, claims, knobs, watch);
   if (framesByTrack === null) return "unreadable";
 
   const out = new Map<number, string>();
   for (const track of wanted) {
-    const frames = framesByTrack.get(track.number) ?? [];
+    const frames = framesByTrack.get(track) ?? [];
     if (frames.length === 0 && statedFrameCount(header, track) !== 0) return "unreadable";
-    const events = frames.map((frame) => eventOf(frame, timeline));
+    const numbered = isNumbered(track);
+    const events = frames.map((frame) => {
+      const readOrder = numbered ? readOrderOf(frame.payload) : null;
+      return eventOf(frame, readOrder, timeline);
+    });
     const assembled = assembleTrack(track, events, "whole");
     if (typeof assembled === "string") return assembled;
     out.set(track.index, assembled.text);

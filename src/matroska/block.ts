@@ -2,13 +2,6 @@ import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
 import { headerNeed } from "./chain.js";
 
-export interface Frame {
-  readOrder: number | null;
-  startTicks: number;
-  durationTicks: number | null;
-  payload: string;
-}
-
 /**
  * The hand that supplies bytes.
  *
@@ -16,16 +9,19 @@ export interface Frame {
  */
 export type BytesSupply = (at: number, need: number) => Promise<Window>;
 
-/** For a claimed track, whether it is numbered; otherwise null. */
-export type TrackClaim = (track: number) => boolean | null;
-
-interface ClaimedFrame {
-  track: number;
-  frame: Frame;
+/** A block's frame, under the claim its track was read by. */
+export interface ClaimedFrame<C> {
+  claim: C;
+  startTicks: number;
+  durationTicks: number | null;
+  payload: Uint8Array;
 }
 
+/** The claim a block's TrackNumber is read under, or null for a track nobody chose. */
+export type ClaimOf<C> = (trackNumber: number) => C | null;
+
 interface BlockHead {
-  track: number;
+  trackNumber: number;
   relTicks: number;
   laced: boolean;
   payloadAt: number;
@@ -61,13 +57,13 @@ export const BLOCK_HEAD_BYTES = 32;
  *
  * An unclaimed track is null, and a rule that stands is its clause.
  */
-export async function frameIn(
+export async function frameIn<C>(
   outer: Element,
   clusterTicks: number,
   held: Window,
-  claim: TrackClaim,
+  claimOf: ClaimOf<C>,
   supply: BytesSupply,
-): Promise<ClaimedFrame | null | BlockClause> {
+): Promise<ClaimedFrame<C> | null | BlockClause> {
   let window = held;
   let body = outer.body;
   let size = outer.size;
@@ -105,17 +101,16 @@ export async function frameIn(
   }
   const head = readBlockHead(window, body, size);
   if (typeof head === "string") return head;
-  const numbered = claim(head.track);
-  if (numbered === null) return null;
+  const claim = claimOf(head.trackNumber);
+  if (claim === null) return null;
   const fault = blockFault(head);
   if (fault !== null) return fault;
   const covering = E.covers(window, head.payloadAt, head.payloadSize)
     ? window
     : await supply(head.payloadAt, head.payloadSize);
-  const payload = E.readBytes(covering, head.payloadAt, head.payloadSize);
-  const frameFields = { payload: E.decodeUtf8(payload), clusterTicks, durationTicks, numbered };
-  const frame = frameOf(head, frameFields);
-  return { track: head.track, frame };
+  const payload = E.readBytes(covering, head.payloadAt, head.payloadSize).slice();
+  const startTicks = clusterTicks + head.relTicks;
+  return { claim, startTicks, durationTicks, payload };
 }
 
 export function heldBlockHead(window: Window, outer: Element): BlockHead | null {
@@ -129,13 +124,6 @@ export function heldBlockHead(window: Window, outer: Element): BlockHead | null 
   return typeof head === "string" ? null : head;
 }
 
-interface FrameFields {
-  payload: string;
-  clusterTicks: number;
-  durationTicks: number | null;
-  numbered: boolean;
-}
-
 const TIME_AND_FLAGS_BYTES = 3;
 
 const BLOCK_FIELD_BYTES = E.MAX_VINT_BYTES + TIME_AND_FLAGS_BYTES;
@@ -145,19 +133,19 @@ const BLOCK_GROUP_PROBE_BYTES = 256;
 const LACING_MASK = 0x06;
 
 function readBlockHead(window: Window, body: number, size: number): BlockHead | BlockClause {
-  const track = E.readVint(window, body, "size");
-  if (typeof track === "string") return BLOCK_REFUSAL.blockHead;
-  const bytesAt = body + track.length;
+  const trackNumber = E.readVint(window, body, "size");
+  if (typeof trackNumber === "string") return BLOCK_REFUSAL.blockHead;
+  const bytesAt = body + trackNumber.length;
   if (!E.covers(window, bytesAt, TIME_AND_FLAGS_BYTES)) return BLOCK_REFUSAL.blockHead;
   const bytes = E.readBytes(window, bytesAt, TIME_AND_FLAGS_BYTES);
   // On the browser bundle's path, so `Buffer.readInt16BE` is not available.
   const relTicks = ((((bytes[0] as number) << 8) | (bytes[1] as number)) << 16) >> 16;
   return {
-    track: track.value,
+    trackNumber: trackNumber.value,
     relTicks,
     laced: ((bytes[2] as number) & LACING_MASK) !== 0,
     payloadAt: bytesAt + TIME_AND_FLAGS_BYTES,
-    payloadSize: size - (track.length + TIME_AND_FLAGS_BYTES),
+    payloadSize: size - (trackNumber.length + TIME_AND_FLAGS_BYTES),
   };
 }
 
@@ -165,17 +153,4 @@ function blockFault(block: BlockHead): BlockClause | null {
   if (block.laced) return BLOCK_REFUSAL.laced;
   if (block.payloadSize < 0) return BLOCK_REFUSAL.shortHead;
   return null;
-}
-
-function frameOf(
-  head: BlockHead,
-  { payload, clusterTicks, durationTicks, numbered }: FrameFields,
-): Frame {
-  const lead = numbered ? /^(\d+),/.exec(payload) : null;
-  return {
-    readOrder: lead === null ? null : Number(lead[1]),
-    startTicks: clusterTicks + head.relTicks,
-    durationTicks,
-    payload,
-  };
 }

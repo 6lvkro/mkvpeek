@@ -1,6 +1,6 @@
 import type { TrackEntry, TracksHeader } from "../matroska/header.js";
 import type { SubtitleFinder } from "../vocabulary.js";
-import { kindOf, type Track, trackCore } from "./core.js";
+import { kindOf, type Track, tagsOf, trackCore } from "./core.js";
 
 export interface SubtitleTrack extends Track<"subtitle"> {
   /** Its `null` state and {@linkcode unsupported} are mutually exclusive. */
@@ -72,8 +72,7 @@ export function subtitleTrack(track: TrackEntry, header: TracksHeader): Subtitle
 }
 
 export function statedFrameCount(header: TracksHeader, track: TrackEntry): number | null {
-  if (track.uid === null) return null;
-  const stated = header.trackTags.get(track.uid)?.find((tag) => tag.name === "NUMBER_OF_FRAMES");
+  const stated = tagsOf(header, track).find((tag) => tag.name === "NUMBER_OF_FRAMES");
   if (stated === undefined) return null;
   const parsed = stated.value.trim() === "" ? Number.NaN : Number(stated.value);
   return Number.isInteger(parsed) ? parsed : null;

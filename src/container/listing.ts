@@ -4,12 +4,11 @@
  * Which kind of answer it becomes is decided by the projection plugged in.
  */
 
-import * as E from "../ebml.js";
-import { abortReason, type Source } from "../io/source.js";
+import type { Source } from "../io/source.js";
 import { readContainer, type TracksHeader } from "../matroska/header.js";
+import { refusalOf, returnedRefusal } from "../refusal.js";
 import type { Track } from "../tracks/core.js";
 import { allTracks, type ListedTrack } from "../tracks/list.js";
-import type { RefusalCode } from "../vocabulary.js";
 import {
   absent,
   answerOf,
@@ -19,24 +18,40 @@ import {
   served,
   wantsOf,
 } from "./contract.js";
+import { leaseOf, type Opener, type Target } from "./target.js";
 
-/**
- * Folds what was caught (an abort, a source failure, a grammar error) into a refusal.
- *
- * The caller picks the code for a grammar error; `error` is only asked whether it is one.
- */
-export function thrownRefusal(
-  error: unknown,
-  grammarCode: "malformed" | "unreadable",
-  signal: AbortSignal | undefined,
-): RefusalCode {
-  const reached = E.isGrammarError(error) ? grammarCode : "source-failed";
-  return returnedRefusal(reached, signal);
+/** What an entry lends the operations: how a string target opens. */
+export interface Platform {
+  open: Opener;
 }
 
-/** The refusal a read reached, or cancelled once its signal has fired: the caller stopped first. */
-export function returnedRefusal(code: RefusalCode, signal: AbortSignal | undefined): RefusalCode {
-  return abortReason(signal) !== null ? "cancelled" : code;
+/** One operation's work over the source a target became. */
+type Work<T extends Track, O extends PeekOptions> = (
+  source: Source,
+  options: O,
+) => Promise<PeekOutcome<T>>;
+
+/** Runs an operation over a target, leased for it and released after it, a refusal answered in the envelope. */
+export async function peekWith<T extends Track, O extends PeekOptions>(
+  platform: Platform,
+  target: Target,
+  options: O,
+  work: Work<T, O>,
+): Promise<PeekOutcome<T>> {
+  const asked = { ...options };
+  try {
+    const lease = await leaseOf(target, platform.open);
+    try {
+      return await work(lease.source, asked);
+    } finally {
+      await lease.release?.();
+    }
+  } catch (error) {
+    const refusal = refusalOf(error, asked.signal);
+    const wants = wantsOf(asked);
+    const absentAnswer = absent(wants);
+    return refused(refusal, absentAnswer);
+  }
 }
 
 export async function fromHeader<T extends Track>(
@@ -56,7 +71,7 @@ export async function fromHeader<T extends Track>(
     const projected = projection(header);
     return served(answerOf(header, projected, wants));
   } catch (error) {
-    const refusal = thrownRefusal(error, "malformed", options.signal);
+    const refusal = refusalOf(error, options.signal);
     return refused(refusal, absentAnswer);
   }
 }

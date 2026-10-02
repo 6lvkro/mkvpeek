@@ -1,5 +1,5 @@
+import type { PeekOptions } from "../container/contract.js";
 import type { IndexFetch, WalkFetch } from "../io/source.js";
-import type { PeekOptions } from "../peek/contract.js";
 import type { SubtitleFinder } from "../vocabulary.js";
 
 /** Every knob `overrides` can set: the index path's and the walk's. */

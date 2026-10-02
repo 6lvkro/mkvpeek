@@ -4,16 +4,18 @@
  * The browser bundle takes only URLs and bytes, on a surface of the same names.
  */
 
+import type { PeekOptions, PeekOutcome } from "../container/contract.js";
+import { type Platform, peekTracksFrom, peekWith } from "../container/listing.js";
+import { type Target, urlRefusal } from "../container/target.js";
 import { fileSource } from "../io/file.js";
+import type { Source } from "../io/source.js";
 import { isHttpUrl, namesAuthority } from "../io/url.js";
 import { urlSource } from "../io/url-node.js";
-import type { PeekOptions, PeekOutcome } from "../peek/contract.js";
-import { peekTracksFrom } from "../peek/engine.js";
-import { type Opener, overTarget, type Target, urlRefusal } from "../peek/target.js";
 import type { SubtitleOptions } from "../subtitle/options.js";
 import { peekSubtitlesFrom } from "../subtitle/peek.js";
 import type { ListedTrack } from "../tracks/list.js";
 import type { SubtitleTrack } from "../tracks/subtitle.js";
+import type { RefusalCode } from "../vocabulary.js";
 
 /**
  * Peeks at a container's subtitles.
@@ -31,7 +33,7 @@ export function peekSubtitles(
   target: Target,
   options: SubtitleOptions = {},
 ): Promise<PeekOutcome<SubtitleTrack>> {
-  return overTarget(target, options, peekSubtitlesFrom, viaPath);
+  return peekWith(PLATFORM, target, options, peekSubtitlesFrom);
 }
 
 /**
@@ -51,10 +53,13 @@ export function peekTracks(
   target: Target,
   options: PeekOptions = {},
 ): Promise<PeekOutcome<ListedTrack>> {
-  return overTarget(target, options, peekTracksFrom, viaPath);
+  return peekWith(PLATFORM, target, options, peekTracksFrom);
 }
 
-const viaPath: Opener = async (target) => {
+const PLATFORM: Platform = { open: viaPath };
+
+/** Opens a string target as a path, or as a URL where it names one. */
+async function viaPath(target: string): Promise<Source | RefusalCode> {
   if (isHttpUrl(target)) return urlSource(target);
   if (namesAuthority(target)) {
     const parsed = URL.parse(target);
@@ -76,4 +81,4 @@ const viaPath: Opener = async (target) => {
     }
     throw error;
   }
-};
+}

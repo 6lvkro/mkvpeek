@@ -1,6 +1,6 @@
-import type { PeekOptions, PeekOutcome } from "../peek/contract.js";
-import { peekTracksFrom } from "../peek/engine.js";
-import { overTarget, type Target } from "../peek/target.js";
+import type { PeekOptions, PeekOutcome } from "../container/contract.js";
+import { type Platform, peekTracksFrom, peekWith } from "../container/listing.js";
+import { type Target, viaUrl } from "../container/target.js";
 import type { SubtitleOptions } from "../subtitle/options.js";
 import { peekSubtitlesFrom } from "../subtitle/peek.js";
 import type { ListedTrack } from "../tracks/list.js";
@@ -38,7 +38,7 @@ export function peekSubtitles(
   target: Target,
   options: SubtitleOptions = {},
 ): Promise<PeekOutcome<SubtitleTrack>> {
-  return overTarget(target, options, peekSubtitlesFrom);
+  return peekWith(PLATFORM, target, options, peekSubtitlesFrom);
 }
 
 /**
@@ -54,5 +54,7 @@ export function peekTracks(
   target: Target,
   options: PeekOptions = {},
 ): Promise<PeekOutcome<ListedTrack>> {
-  return overTarget(target, options, peekTracksFrom);
+  return peekWith(PLATFORM, target, options, peekTracksFrom);
 }
+
+const PLATFORM: Platform = { open: viaUrl };

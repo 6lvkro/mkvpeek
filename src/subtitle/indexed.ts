@@ -24,6 +24,7 @@ import {
 import type { CuePosition, IndexedHeader, TrackEntry } from "../matroska/header.js";
 import { isNumbered, statedFrameCount } from "../tracks/subtitle.js";
 import type { RefusalCode } from "../vocabulary.js";
+import { readOrderOf } from "./ass.js";
 import { type Event, eventOf, type Timeline } from "./assemble.js";
 import { assembleTrack, planFrom, type ReadPlan, type TrackTexts } from "./conclude.js";
 
@@ -382,11 +383,12 @@ async function readRound(
     const cued = timed.get(entry);
     const frame =
       cued === undefined
-        ? await readFrame(windows, point, track.number, numbered, memo)
-        : await readCuedFrame(windows, cued, track.number, numbered);
+        ? await readFrame(windows, point, track.number, track, memo)
+        : await readCuedFrame(windows, cued, track.number, track);
     if (typeof frame === "string") return "unreadable";
-    const attributed = { track: track.number, event: eventOf(frame, timeline) };
-    events.push(attributed);
+    const readOrder = numbered ? readOrderOf(frame.payload) : null;
+    const event = eventOf(frame, readOrder, timeline);
+    events.push({ track: track.number, event });
   }
   return events;
 }

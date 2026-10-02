@@ -13,9 +13,9 @@ import {
   BLOCK_HEAD_BYTES,
   BLOCK_REFUSAL,
   type BlockClause,
-  type Frame,
+  type ClaimedFrame,
+  type ClaimOf,
   frameIn,
-  type TrackClaim,
 } from "./block.js";
 import {
   CLUSTER_PROBE_BYTES,
@@ -25,26 +25,26 @@ import {
   type SegmentPass,
 } from "./chain.js";
 
-export async function walkFrames(
+export async function walkFrames<C>(
   pass: SegmentPass,
-  tracks: ReadonlyMap<number, boolean>,
+  claims: ReadonlyMap<number, C>,
   knobs: WalkFetch,
   { onProgress, signal }: Watch,
-): Promise<Map<number, Frame[]> | null> {
+): Promise<Map<C, ClaimedFrame<C>[]> | null> {
   const fileSize = pass.head.fileSize;
   onProgress(0, fileSize);
   const slotBytes = Math.min(knobs.blockAheadBytes, fileSize);
   const pool = windowPool(slotBytes, knobs.concurrency + 4);
   const sized = { source: pass.source, fileSize };
-  const walk: WalkInvariants = { sized, tracks, knobs, head: pass.head, signal };
+  const walk: WalkInvariants<C> = { sized, claims, knobs, head: pass.head, signal };
   let done = 0;
   let refused = false;
-  const walked = new Map<number, Map<number, Frame[]>>();
+  const walked = new Map<number, ClaimedFrame<C>[]>();
   const record = (
     index: number,
     span: ClusterSpan,
-    outcome: SweptFrames | BlockClause,
-  ): outcome is SweptFrames => {
+    outcome: SweptFrames<C> | BlockClause,
+  ): outcome is SweptFrames<C> => {
     stopIfAborted(signal);
     if (typeof outcome === "string") {
       refused = true;
@@ -128,9 +128,9 @@ export async function walkFrames(
 }
 
 /** The invariants of one walk. */
-interface WalkInvariants {
+interface WalkInvariants<C> {
   sized: SizedSource;
-  tracks: ReadonlyMap<number, boolean>;
+  claims: ReadonlyMap<number, C>;
   knobs: WalkFetch;
   head: Window;
   signal: AbortSignal | undefined;
@@ -147,12 +147,12 @@ interface ClusterSpan {
   end: number;
 }
 
-type SweptFrames = {
-  frames: Map<number, Frame[]>;
+type SweptFrames<C> = {
+  frames: ClaimedFrame<C>[];
   end: number;
 };
 
-type WalkedCluster = (SweptFrames & { carried: Loaned }) | BlockClause;
+type WalkedCluster<C> = (SweptFrames<C> & { carried: Loaned }) | BlockClause;
 
 /**
  * A cluster the hop measured and put in the worker queue.
@@ -189,14 +189,14 @@ const TOP_LEVEL_IDS = new Set<number>([...CLUSTER_END_IDS, ...Object.values(E.ID
 /** A BlockGroup child sitting directly under the cluster is a stray block. */
 const STRAY_IDS = new Set<number>(Object.values(E.ID.blockGroup));
 
-async function walkCluster(
-  walk: WalkInvariants,
+async function walkCluster<C>(
+  walk: WalkInvariants<C>,
   span: ClusterSpan,
   pool: WindowPool,
   seed?: Loaned,
-): Promise<WalkedCluster> {
+): Promise<WalkedCluster<C>> {
   const ledger = new Set<Loaned>();
-  let outcome: WalkedCluster;
+  let outcome: WalkedCluster<C>;
   try {
     const loans = { pool, ledger };
     outcome = await walkSpan(walk, span, loans, seed);
@@ -221,12 +221,12 @@ function releaseAll(ledger: Set<Loaned>, swallow: boolean): void {
   if (first !== null && !swallow) throw first;
 }
 
-async function walkSpan(
-  { sized, tracks, knobs, head, signal }: WalkInvariants,
+async function walkSpan<C>(
+  { sized, claims, knobs, head, signal }: WalkInvariants<C>,
   span: ClusterSpan,
   { pool, ledger }: Loans,
   seed?: Loaned,
-): Promise<WalkedCluster> {
+): Promise<WalkedCluster<C>> {
   const widthFor = (at: number, need: number) => {
     if (knobs.blockAheadBytes === 0) return need;
     const bound = Math.min(knobs.blockAheadBytes, span.end - at);
@@ -259,7 +259,7 @@ async function walkSpan(
   const clusterTime = readClusterTime(carried, span.el);
   if (clusterTime === null) return BLOCK_REFUSAL.noClusterTime;
 
-  const frames = new Map<number, Frame[]>();
+  const frames: ClaimedFrame<C>[] = [];
   let pos = span.el.body;
   const supply = async (at: number, need: number) => {
     if (E.covers(carried, at, need)) return carried;
@@ -270,7 +270,7 @@ async function walkSpan(
     }
     return window;
   };
-  const claim: TrackClaim = (track) => tracks.get(track) ?? null;
+  const claimOf: ClaimOf<C> = (trackNumber) => claims.get(trackNumber) ?? null;
   while (pos < span.end) {
     const need = Math.min(BLOCK_HEAD_BYTES, span.end - pos);
     const window = await supply(pos, need);
@@ -287,29 +287,24 @@ async function walkSpan(
     }
     if (el.next > span.end) return BLOCK_REFUSAL.runsPastCluster;
     if (FRAME_IDS.has(el.id)) {
-      const attributed = await frameIn(el, clusterTime, window, claim, supply);
+      const attributed = await frameIn(el, clusterTime, window, claimOf, supply);
       if (typeof attributed === "string") return attributed;
-      if (attributed !== null) {
-        const list = frames.get(attributed.track);
-        if (list === undefined) frames.set(attributed.track, [attributed.frame]);
-        else list.push(attributed.frame);
-      }
+      if (attributed !== null) frames.push(attributed);
     }
     pos = el.next;
   }
   return { frames, end: span.end, carried };
 }
 
-function merged(walked: Map<number, Map<number, Frame[]>>): Map<number, Frame[]> {
-  const chunks = new Map<number, Frame[][]>();
+function merged<C>(walked: Map<number, ClaimedFrame<C>[]>): Map<C, ClaimedFrame<C>[]> {
+  const byClaim = new Map<C, ClaimedFrame<C>[]>();
   const sorted = [...walked.entries()].sort(([a], [b]) => a - b);
-  for (const [, found] of sorted) {
-    for (const [track, frames] of found) {
-      const list = chunks.get(track);
-      if (list === undefined) chunks.set(track, [frames]);
-      else list.push(frames);
+  for (const [, frames] of sorted) {
+    for (const frame of frames) {
+      const list = byClaim.get(frame.claim);
+      if (list === undefined) byClaim.set(frame.claim, [frame]);
+      else list.push(frame);
     }
   }
-  const flattened = [...chunks].map(([track, lists]): [number, Frame[]] => [track, lists.flat()]);
-  return new Map(flattened);
+  return byClaim;
 }
