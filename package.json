@@ -1,6 +1,6 @@
 {
   "name": "mkvpeek",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Matroska tracks, container info and subtitle text with no ffmpeg, no native module, and a fraction of the file read",
   "keywords": [
