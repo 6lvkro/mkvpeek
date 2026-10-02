@@ -25,22 +25,21 @@ export const eventOf = (frame: TickedFrame, timeline: Timeline): Event => ({
 });
 
 export function assembleAss(codecPrivate: string, events: readonly Event[]): string {
-  const script = codecPrivate.replace(/\r\n/g, "\n");
-  const headEnd = assHeadEnd(script);
-  const ssaMode = /^\[V4 Styles\]/m.test(script);
-  const head = script.slice(0, headEnd);
-  const trailer = script.slice(headEnd);
-  let body = "";
-  for (const e of events) {
-    const { layer: raw, middle, text } = splitAssPayload(e.payload);
-    const marked = raw === "" ? "0" : raw;
-    const layer = ssaMode ? `Marked=${marked}` : raw;
-    const startCs = toCentiseconds(e.startMs);
-    body += `Dialogue: ${layer},${assTime(startCs)},${assTime(startCs + toCentiseconds(e.durationMs))},${middle},${text}\n`;
-  }
-  const separator = head.endsWith("\n") ? "" : "\r\n";
-  const written = `${head}${separator}${body}${trailer}`;
-  return written.endsWith("\n") ? written : `${written}\n`;
+  const searched = cString(codecPrivate);
+  const eventsAt = searched.indexOf("\n[Events]");
+  const formatAt = eventsAt < 0 ? -1 : searched.indexOf("Format:", eventsAt);
+  const formatEnd = formatAt < 0 ? -1 : searched.indexOf("\n", formatAt);
+  const headEnd = formatEnd < 0 ? codecPrivate.length : formatEnd + 1;
+  const ssa = codecPrivate !== "" && !searched.includes("\n[V4+ Styles]");
+  const firstColumn = ssa ? "Marked" : "Layer";
+  const added =
+    codecPrivate !== "" && eventsAt < 0
+      ? `[Events]\nFormat: ${firstColumn}, ${EVENT_COLUMNS}\n`
+      : "";
+  const dialogues = events.map((e) => `Dialogue: ${dialogueOf(e, ssa)}\n`);
+  const head = lines(codecPrivate.slice(0, headEnd));
+  const trailer = lines(codecPrivate.slice(headEnd));
+  return `${head}${added}${dialogues.join("")}${trailer}`;
 }
 
 export function assembleVtt(events: readonly Event[]): string {
@@ -78,17 +77,25 @@ interface Elapsed {
   fraction: number;
 }
 
-interface DialogSplit {
-  layer: string;
-  middle: string;
-  text: string;
+interface LeadingNumber {
+  value: string;
+  end: number;
 }
 
-const DIALOGUE_LAYER_FIELD = 1;
-const DIALOGUE_TEXT_FIELD = 8;
+const MARKED_PREFIX = "Marked=";
+
+/** The Format line's columns after its first. */
+const EVENT_COLUMNS = "Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
+
+/** A number as C's strtol reads one in base 10. */
+const C_LONG = /^[ \t\n\v\f\r]*([+-]?\d+)/;
+const LONG_MAX = 2n ** 63n - 1n;
+const LONG_MIN = -(2n ** 63n);
 
 const MS_PER_SECOND = 1000;
 const CS_PER_SECOND = 100;
+
+const LAST_ASS_CS = 10 * 3600 * CS_PER_SECOND - 1;
 
 const toCentiseconds = (ms: number): number => Math.round(ms / 10);
 
@@ -96,37 +103,39 @@ const padded = (n: number, width = 2): string => String(n).padStart(width, "0");
 
 const padded2 = (n: number): string => (n < 10 ? `0${String(n)}` : String(n));
 
-function splitAssPayload(payload: string): DialogSplit {
-  const afterReadOrder = payload.indexOf(",");
-  const afterLayer = payload.indexOf(",", afterReadOrder + 1);
-  if (afterLayer < 0) return { layer: payload.slice(afterReadOrder + 1), middle: "", text: "" };
+const cString = (text: string): string => text.split("\0", 1)[0] as string;
 
-  let afterEffect = afterLayer;
-  for (let field = DIALOGUE_LAYER_FIELD + 1; field < DIALOGUE_TEXT_FIELD; field++) {
-    const next = payload.indexOf(",", afterEffect + 1);
-    if (next < 0) {
-      return {
-        layer: payload.slice(afterReadOrder + 1, afterLayer),
-        middle: payload.slice(afterLayer + 1),
-        text: "",
-      };
-    }
-    afterEffect = next;
-  }
-  return {
-    layer: payload.slice(afterReadOrder + 1, afterLayer),
-    middle: payload.slice(afterLayer + 1, afterEffect),
-    text: payload.slice(afterEffect + 1),
-  };
+const past = (text: string, at: number, what: string): number =>
+  text.startsWith(what, at) ? at + what.length : at;
+
+function dialogueOf(e: Event, ssa: boolean): string {
+  const payload = cString(e.payload);
+  const order = cStrtol(payload, 0);
+  const fieldAt = past(payload, order.end, ",");
+  const layerAt = ssa ? past(payload, fieldAt, MARKED_PREFIX) : fieldAt;
+  const layer = cStrtol(payload, layerAt);
+  const textAt = past(payload, layer.end, ",");
+  const rest = payload.slice(textAt).replace(/[\r\n]+$/, "");
+  const startCs = toCentiseconds(e.startMs);
+  const endCs = startCs + toCentiseconds(e.durationMs);
+  const lead = ssa ? MARKED_PREFIX : "";
+  return `${lead}${layer.value},${assTime(startCs)},${assTime(endCs)},${rest}`;
 }
 
-function assHeadEnd(script: string): number {
-  const events = script.indexOf("\n[Events]");
-  if (events < 0) return script.length;
-  const format = script.indexOf("Format:", events);
-  if (format < 0) return script.length;
-  const eol = script.indexOf("\n", format);
-  return eol < 0 ? script.length : eol + 1;
+function cStrtol(text: string, from: number): LeadingNumber {
+  const read = C_LONG.exec(text.slice(from));
+  if (read === null) return { value: "0", end: from };
+  const stated = BigInt(read[1] as string);
+  const capped = stated > LONG_MAX ? LONG_MAX : stated;
+  const value = capped < LONG_MIN ? LONG_MIN : capped;
+  return { value: String(value), end: from + read[0].length };
+}
+
+/** CR, LF and CRLF each end a line, and each is written ending in LF. */
+function lines(text: string): string {
+  const split = text.split(/\r\n|\r|\n/);
+  if (split.at(-1) === "") split.pop();
+  return split.map((line) => `${line}\n`).join("");
 }
 
 function clockFields(duration: number, perSecond: number): Elapsed {
@@ -142,7 +151,8 @@ function clockFields(duration: number, perSecond: number): Elapsed {
 }
 
 function assTime(cs: number): string {
-  const { hours, minutes, seconds, fraction } = clockFields(cs, CS_PER_SECOND);
+  const written = Math.min(cs, LAST_ASS_CS);
+  const { hours, minutes, seconds, fraction } = clockFields(written, CS_PER_SECOND);
   return `${String(hours)}:${padded2(minutes)}:${padded2(seconds)}.${padded2(fraction)}`;
 }
 
