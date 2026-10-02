@@ -126,9 +126,10 @@ export function stopIfAborted(signal: AbortSignal | undefined): void {
   if (stopped !== null) throw stopped;
 }
 
-/** A Watch whose report cannot end the read by throwing. */
+/** A Watch whose report cannot end the read by throwing, and is not made once the signal fires. */
 export function watchOver(signal: AbortSignal | undefined, report: ReportBytes): Watch {
   const onProgress: ReportBytes = (done, total) => {
+    if (signal?.aborted === true) return;
     let returned: unknown;
     try {
       returned = report(done, total);
