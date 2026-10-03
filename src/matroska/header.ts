@@ -1,7 +1,6 @@
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
-import { gathered } from "../io/lanes.js";
-import { HEAD_BYTES, type Source, stopIfAborted } from "../io/source.js";
+import { HEAD_BYTES, type Inflate, type Source, stopIfAborted } from "../io/source.js";
 import { windowAt } from "../io/windows.js";
 import type {
   Attachment,
@@ -9,7 +8,6 @@ import type {
   RefusalCode,
   TrackFlags,
   TrackTag,
-  Wants,
 } from "../vocabulary.js";
 import {
   CLUSTER_PROBE_BYTES,
@@ -21,7 +19,13 @@ import {
   type Segment,
   type SegmentPass,
 } from "./chain.js";
-import { type ContentEncoding, codecPrivateOf, FRAMES_SCOPE } from "./encoding.js";
+import {
+  type ContentCompression,
+  type ContentEncoding,
+  codecPrivateOf,
+  FRAMES_SCOPE,
+  ZLIB_ALGO,
+} from "./encoding.js";
 
 export interface TrackEntry {
   index: number;
@@ -45,102 +49,100 @@ export interface CuePosition {
   ticks: number | null;
 }
 
-/** @see {@linkcode readContainer|readContainer(source, "tracks")} */
-export interface TracksHeader {
+/** Each track's cue points, by TrackNumber. */
+export type CueIndex = Map<number, CuePosition[]>;
+
+/** A Segment whose head, Tracks and Tags are read. */
+export interface OpenedSegment {
+  source: Source;
   segment: Segment;
-  trackEntries: TrackEntry[];
-  fileSize: number;
-  trackTags: Map<string, TrackTag[]>;
-  info: ContainerInfo;
-  attachments: Attachment[];
-}
-
-/** @see {@linkcode readContainer|readContainer(source, "timed")} */
-export interface TimedHeader extends TracksHeader {
   head: Window;
-  firstClusterTicks: number | null;
+  /** Where each top-level element starts, as the head and its SeekHeads state. */
+  offsets: Map<number, number>;
+  trackEntries: TrackEntry[];
+  /** The tags each track states, by TrackUID. */
+  trackTags: Map<string | null, TrackTag[]>;
 }
 
-/** @see {@linkcode readContainer|readContainer(source, "indexed")} */
-export interface IndexedHeader extends TimedHeader {
-  cues: Map<number, CuePosition[]>;
-}
-
-interface ContainerReadOptions extends Wants {
-  concurrency?: number | undefined;
-  signal?: AbortSignal | undefined;
-}
-
-export async function readContainer(
+export async function openSegment(
   source: Source,
-  depth: "tracks",
-  options: ContainerReadOptions,
-): Promise<TracksHeader | RefusalCode>;
-export async function readContainer(
-  source: Source,
-  depth: "timed",
-  options: ContainerReadOptions & { concurrency: number },
-): Promise<TimedHeader | RefusalCode>;
-export async function readContainer(
-  source: Source,
-  depth: "indexed",
-  options: ContainerReadOptions & { concurrency: number },
-): Promise<IndexedHeader | RefusalCode>;
-export async function readContainer(
-  source: Source,
-  depth: "tracks" | "timed" | "indexed",
-  { concurrency = 1, signal: stop, ...wants }: ContainerReadOptions,
-): Promise<TracksHeader | TimedHeader | IndexedHeader | RefusalCode> {
-  const opened = await openSegment(source, stop);
-  if (typeof opened === "string") return opened;
-  const { segment } = opened;
-  const noTags = new Map<string, TrackTag[]>();
-  const noCues = new Map<number, CuePosition[]>();
-  const noInfo = defaultInfo();
-  const noAttachments: Attachment[] = [];
-  const parseCuesIn = (w: Window, el: Element) => parseCues(w, el, segment);
-  // The timed depth fetches Info for its scale even when nobody asked for delivery.
-  const wantsInfo = wants.info || depth !== "tracks";
+  signal: AbortSignal | undefined,
+  inflate: Inflate,
+): Promise<OpenedSegment | RefusalCode> {
+  stopIfAborted(signal);
+  const fileSize = await source.size(signal);
+  const head = await windowAt({ source, fileSize }, 0, HEAD_BYTES, signal);
 
-  const fetchTrackTags = () => fetchedOptional(opened, E.ID.segment.TAGS, noTags, parseTrackTags);
-  const fetchInfo = wantsInfo
-    ? () => fetchedOptional(opened, E.ID.segment.INFO, noInfo, parseInfo)
-    : () => Promise.resolve(noInfo);
-  const fetchAttachments = wants.attachments
-    ? () => readAttachments(opened)
-    : () => Promise.resolve(noAttachments);
-  const fetchTimedFields =
-    depth !== "tracks" ? () => readTimedFields(opened) : () => Promise.resolve(null);
-  const fetchCues =
-    depth === "indexed"
-      ? () => fetchedOptional(opened, E.ID.segment.CUES, noCues, parseCuesIn)
-      : () => Promise.resolve(null);
-  const fetches = [
-    fetchTrackTags,
-    fetchInfo,
-    fetchAttachments,
-    fetchTimedFields,
-    fetchCues,
-  ] as const;
-  const [trackTags, info, attachments, timed, cues] = await gathered(fetches, concurrency, stop);
+  const ebml = E.readElement(head, 0);
+  if (!readsAs(ebml, E.ID.root.EBML)) return "not-matroska";
 
-  return {
-    ...opened.headerSoFar,
-    trackTags,
-    info,
-    attachments,
-    ...(timed === null ? {} : { head: opened.head, ...timed }),
-    ...(cues === null ? {} : { cues }),
+  const segmentEl = E.readElement(head, ebml.next);
+  if (typeof segmentEl === "string" || segmentEl.id !== E.ID.root.SEGMENT) {
+    return "malformed";
+  }
+
+  const segment: Segment = {
+    body: segmentEl.body,
+    end: "open" in segmentEl ? fileSize : segmentEl.next,
   };
+  const offsets = locateTopLevel(head, segment);
+  const located: Located = { source, segment, head, signal, offsets };
+  const noTags = new Map<string | null, TrackTag[]>();
+  const [fetchedTracks, trackTags] = await Promise.all([
+    fetchElement(located, E.ID.segment.TRACKS),
+    fetchedOptional(located, E.ID.segment.TAGS, noTags, parseTrackTags),
+  ]);
+  if (fetchedTracks === null) return "malformed";
+
+  const parsed = parseTracks(fetchedTracks.window, fetchedTracks.element);
+  if (typeof parsed === "string") return parsed;
+  const meant = async (entry: TrackEntry): Promise<TrackEntry> => {
+    const codecPrivate = await codecPrivateOf(entry.codecPrivate, entry.encodings, inflate);
+    return { ...entry, codecPrivate };
+  };
+  const trackEntries = await Promise.all(parsed.map(meant));
+  return { source, segment, head, offsets, trackEntries, trackTags };
+}
+
+export function readInfo(
+  opened: OpenedSegment,
+  signal: AbortSignal | undefined,
+): Promise<ContainerInfo> {
+  const located = { ...opened, signal };
+  const noInfo = defaultInfo();
+  return fetchedOptional(located, E.ID.segment.INFO, noInfo, parseInfo);
+}
+
+export function readFirstClusterTicks(
+  opened: OpenedSegment,
+  signal: AbortSignal | undefined,
+): Promise<number | null> {
+  const located = { ...opened, signal };
+  return optional<number | null>(null, () => firstClusterTicksIn(located));
+}
+
+export function readCues(
+  opened: OpenedSegment,
+  signal: AbortSignal | undefined,
+): Promise<CueIndex> {
+  const located = { ...opened, signal };
+  const parseCuesIn = (window: Window, el: Element) => parseCues(window, el, opened.segment);
+  const noCues: CueIndex = new Map();
+  return fetchedOptional(located, E.ID.segment.CUES, noCues, parseCuesIn);
+}
+
+/** What each attached file states of itself, its bytes left where they are. */
+export function readAttachments(
+  opened: OpenedSegment,
+  signal: AbortSignal | undefined,
+): Promise<Attachment[]> {
+  const located = { ...opened, signal };
+  return attachmentsIn(located);
 }
 
 /** The pass that learned where the top-level elements are. */
 interface Located extends SegmentPass {
   offsets: Map<number, number>;
-}
-
-interface OpenedSegment extends Located {
-  headerSoFar: Omit<TracksHeader, "trackTags" | "info" | "attachments">;
 }
 
 /**
@@ -162,6 +164,9 @@ const MAX_HEADER_ELEMENT_BYTES = 64 * 1024 ** 2;
  */
 const MAX_ATTACHMENT_CHILDREN = 4096;
 
+/** The ContentEncodingType of a compression, where 1 is an encryption. */
+const COMPRESSION_TYPE = 0;
+
 const defaultInfo = (): ContainerInfo => ({
   title: null,
   muxingApp: null,
@@ -177,15 +182,15 @@ const nulTrimmed = (padded: string): string => padded.replace(/\0+$/, "");
 
 /** Fetches and parses one optional top-level element, or folds to the absent answer. */
 const fetchedOptional = <T>(
-  opened: Located,
+  located: Located,
   id: number,
   fallback: T,
   parse: (window: Window, element: Element) => T | null,
 ): Promise<T> =>
-  optional(fallback, async (fall) => {
-    const el = await fetchElement(opened, id);
-    if (el === null) return fall;
-    return parse(el.window, el.element) ?? fall;
+  optional(fallback, async () => {
+    const el = await fetchElement(located, id);
+    if (el === null) return fallback;
+    return parse(el.window, el.element) ?? fallback;
   });
 
 /**
@@ -194,11 +199,11 @@ const fetchedOptional = <T>(
  * If the head is inside `held` it is used as is;
  * otherwise `ELEMENT_PROBE_BYTES` are bought within the limit.
  */
-function probed(opened: Located, at: number, limit: number, held: Window): Promise<Window> {
+function probed(located: Located, at: number, limit: number, held: Window): Promise<Window> {
   const need = headerNeed(at, limit);
   if (E.covers(held, at, need)) return Promise.resolve(held);
   const width = Math.min(ELEMENT_PROBE_BYTES, limit - at);
-  return readPastHead(opened, at, width, held);
+  return readPastHead(located, at, width, held);
 }
 
 function flagOf(window: Window, field: Element): boolean | null {
@@ -219,59 +224,20 @@ function simpleTag(window: Window, { size, body }: Element): TrackTag {
   return { name: nulTrimmed(name), value: nulTrimmed(value) };
 }
 
-async function openSegment(
-  source: Source,
-  signal: AbortSignal | undefined,
-): Promise<OpenedSegment | RefusalCode> {
-  stopIfAborted(signal);
-  const fileSize = await source.size(signal);
-  // A short answer throws here and reaches the fold.
-  const head = await windowAt({ source, fileSize }, 0, HEAD_BYTES, signal);
-
-  const ebml = E.readElement(head, 0);
-  if (!readsAs(ebml, E.ID.root.EBML)) return "not-matroska";
-
-  const segmentEl = E.readElement(head, ebml.next);
-  if (typeof segmentEl === "string" || segmentEl.id !== E.ID.root.SEGMENT) {
-    return "malformed";
-  }
-
-  const segment: Segment = {
-    body: segmentEl.body,
-    end: "open" in segmentEl ? fileSize : segmentEl.next,
-  };
-  const located = locateTopLevel(head, segment);
-  const pass: Located = { source, segment, head, signal, offsets: located };
-  const tracksEl = await fetchElement(pass, E.ID.segment.TRACKS);
-  if (tracksEl === null) return "malformed";
-
-  const tracks = parseTracks(tracksEl.window, tracksEl.element);
-  if (typeof tracks === "string") return tracks;
-
-  return { ...pass, headerSoFar: { segment, trackEntries: tracks, fileSize } };
-}
-
-async function readTimedFields(opened: Located): Promise<Pick<TimedHeader, "firstClusterTicks">> {
-  const firstClusterTicks = await optional(null as number | null, () =>
-    readFirstClusterTime(opened),
-  );
-  return { firstClusterTicks };
-}
-
-async function optional<T>(fallback: T, read: (fallback: T) => Promise<T>): Promise<T> {
+async function optional<T>(fallback: T, read: () => Promise<T>): Promise<T> {
   try {
-    return await read(fallback);
+    return await read();
   } catch (error) {
     if (!E.isGrammarError(error)) throw error;
     return fallback;
   }
 }
 
-async function readFirstClusterTime(opened: Located): Promise<number | null> {
-  let at = opened.offsets.get(E.ID.segment.CLUSTER);
-  let held = opened.head;
+async function firstClusterTicksIn(located: Located): Promise<number | null> {
+  let at = located.offsets.get(E.ID.segment.CLUSTER);
+  let held = located.head;
   if (at === undefined) {
-    for await (const hop of hopTopLevel(opened)) {
+    for await (const hop of hopTopLevel(located)) {
       if (hop.el.id === E.ID.segment.CLUSTER) {
         at = hop.at;
         held = hop.window;
@@ -281,7 +247,7 @@ async function readFirstClusterTime(opened: Located): Promise<number | null> {
   }
   if (at === undefined) return null;
 
-  const window = await readPastHead(opened, at, CLUSTER_PROBE_BYTES, held);
+  const window = await readPastHead(located, at, CLUSTER_PROBE_BYTES, held);
   const cluster = E.readElement(window, at);
   if (typeof cluster === "string" || cluster.id !== E.ID.segment.CLUSTER) return null;
 
@@ -333,12 +299,8 @@ function locateTopLevel(head: Window, segment: Segment): Map<number, number> {
   return offsets;
 }
 
-function parseCues(
-  window: Window,
-  cues: Element,
-  segment: Segment,
-): Map<number, CuePosition[]> | null {
-  const byTrack = new Map<number, CuePosition[]>();
+function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | null {
+  const byTrack: CueIndex = new Map();
   const { bytes } = window;
   // The child walk is unrolled by hand,
   // because with a cue point per subtitle frame an object per element is the cost.
@@ -426,16 +388,16 @@ function parseCues(
 }
 
 async function fetchElement(
-  opened: Located,
+  located: Located,
   id: number,
 ): Promise<{ window: Window; element: Element } | null> {
-  const at = opened.offsets.get(id);
+  const at = located.offsets.get(id);
   if (at === undefined) return null;
-  const probe = await probed(opened, at, opened.head.fileSize, opened.head);
+  const probe = await probed(located, at, located.head.fileSize, located.head);
   const header = E.readElement(probe, at);
   if (!readsAs(header, id)) return null;
   if (header.next - at > MAX_HEADER_ELEMENT_BYTES) return null;
-  const window = await readPastHead(opened, at, header.next - at, probe);
+  const window = await readPastHead(located, at, header.next - at, probe);
   const element = E.readElement(window, at);
   return E.decoded(element) ? { window, element } : null;
 }
@@ -518,7 +480,6 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
     if (track.number < 0) return "malformed";
     if (numbers.has(track.number)) return "malformed";
     numbers.add(track.number);
-    track.codecPrivate = codecPrivateOf(track.codecPrivate, track.encodings);
     entries.push(track);
   }
   return entries;
@@ -541,13 +502,36 @@ function encodingsIn(window: Window, list: Element): ContentEncoding[] | null {
 }
 
 function encodingOf(window: Window, encoding: Element): ContentEncoding {
+  let order = 0;
   let scope = FRAMES_SCOPE;
+  let type = COMPRESSION_TYPE;
+  let compression: ContentCompression = { algo: ZLIB_ALGO, settings: null };
   for (const field of E.children(window, encoding.body, encoding.size)) {
-    if (field.id === E.ID.contentEncoding.SCOPE) {
+    const { id } = field;
+    if (id === E.ID.contentEncoding.ORDER) {
+      order = uintOf(window, field);
+    } else if (id === E.ID.contentEncoding.SCOPE) {
       scope = uintOf(window, field);
+    } else if (id === E.ID.contentEncoding.TYPE) {
+      type = uintOf(window, field);
+    } else if (id === E.ID.contentEncoding.COMPRESSION) {
+      compression = compressionOf(window, field);
     }
   }
-  return { scope };
+  return { order, scope, compression: type === COMPRESSION_TYPE ? compression : null };
+}
+
+function compressionOf(window: Window, compressionEl: Element): ContentCompression {
+  let algo = ZLIB_ALGO;
+  let settings: Uint8Array | null = null;
+  for (const field of E.children(window, compressionEl.body, compressionEl.size)) {
+    if (field.id === E.ID.contentEncoding.COMP_ALGO) {
+      algo = uintOf(window, field);
+    } else if (field.id === E.ID.contentEncoding.COMP_SETTINGS) {
+      settings = E.readBytes(window, field.body, field.size).slice();
+    }
+  }
+  return { algo, settings };
 }
 
 function uintOf(window: Window, field: Element): number {
@@ -572,7 +556,7 @@ function parseTimestampScale(window: Window, info: Element): number {
  * it stops at a child that does not read and hands back the last window.
  */
 async function eachChildIn(
-  opened: Located,
+  located: Located,
   parent: Element,
   held: Window,
   visit: Visit,
@@ -583,7 +567,7 @@ async function eachChildIn(
   while (pos < parent.next) {
     children += 1;
     if (children > MAX_ATTACHMENT_CHILDREN) return null;
-    window = await probed(opened, pos, parent.next, window);
+    window = await probed(located, pos, parent.next, window);
     const field = E.readElement(window, pos);
     if (!E.decoded(field)) return window;
     if (!E.fits(field, parent.next)) return null;
@@ -595,29 +579,26 @@ async function eachChildIn(
   return window;
 }
 
-async function readAttachments(opened: OpenedSegment): Promise<Attachment[]> {
-  const at = opened.offsets.get(E.ID.segment.ATTACHMENTS);
+async function attachmentsIn(located: Located): Promise<Attachment[]> {
+  const at = located.offsets.get(E.ID.segment.ATTACHMENTS);
   if (at === undefined) return [];
-  const read = async (fallback: Attachment[]) => {
-    const window = await probed(opened, at, opened.head.fileSize, opened.head);
-    const attachments = E.readElement(window, at);
-    if (!readsAs(attachments, E.ID.segment.ATTACHMENTS)) return fallback;
-    const out: Attachment[] = [];
-    const visit: Visit = async (_at, fileEl, held) => {
-      if (fileEl.id !== E.ID.attachment.FILE) return held;
-      const file = await readAttachedFile(opened, fileEl, held);
-      if (file === null) return null;
-      out.push(file.file);
-      return file.window;
-    };
-    const last = await eachChildIn(opened, attachments, window, visit);
-    return last === null ? fallback : out;
+  const window = await probed(located, at, located.head.fileSize, located.head);
+  const attachmentsEl = E.readElement(window, at);
+  if (!readsAs(attachmentsEl, E.ID.segment.ATTACHMENTS)) return [];
+  const attachments: Attachment[] = [];
+  const visit: Visit = async (_at, fileEl, held) => {
+    if (fileEl.id !== E.ID.attachment.FILE) return held;
+    const file = await readAttachedFile(located, fileEl, held);
+    if (file === null) return null;
+    attachments.push(file.file);
+    return file.window;
   };
-  return optional([] as Attachment[], read);
+  const last = await eachChildIn(located, attachmentsEl, window, visit);
+  return last === null ? [] : attachments;
 }
 
 async function readAttachedFile(
-  opened: OpenedSegment,
+  located: Located,
   fileEl: Element,
   held: Window,
 ): Promise<{ file: Attachment; window: Window } | null> {
@@ -636,7 +617,7 @@ async function readAttachedFile(
       return carried;
     }
     if (field.next - at > ELEMENT_PROBE_BYTES) return carried;
-    const window = await readPastHead(opened, at, field.next - at, carried);
+    const window = await readPastHead(located, at, field.next - at, carried);
     if (field.id === E.ID.attachment.FILE_NAME) {
       out.fileName = nulTrimmed(E.readUtf8(window, field));
     } else if (field.id === E.ID.attachment.FILE_MIME) {
@@ -648,7 +629,7 @@ async function readAttachedFile(
     }
     return window;
   };
-  const last = await eachChildIn(opened, fileEl, held, visit);
+  const last = await eachChildIn(located, fileEl, held, visit);
   return last === null ? null : { file: out, window: last };
 }
 
@@ -676,8 +657,8 @@ function parseInfo(window: Window, info: Element): ContainerInfo {
   return out;
 }
 
-function parseTrackTags(window: Window, tags: Element): Map<string, TrackTag[]> {
-  const bags = new Map<string, TrackTag[]>();
+function parseTrackTags(window: Window, tags: Element): Map<string | null, TrackTag[]> {
+  const bags = new Map<string | null, TrackTag[]>();
   for (const tag of E.children(window, tags.body, tags.size)) {
     if (tag.id !== E.ID.tag.ENTRY) continue;
     let uid: string | null = null;

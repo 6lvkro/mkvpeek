@@ -1,47 +1,24 @@
 /**
  * The entry point that also takes file paths.
  *
- * The browser bundle takes only URLs and bytes, on a surface of the same names.
+ * The examples for URLs and bytes are in the browser entry's docs, under the same names.
  */
 
-import type { PeekOptions, PeekOutcome } from "../container/contract.js";
-import { type Platform, peekTracksFrom, peekWith } from "../container/listing.js";
+import type { Container, PeekOptions, PeekOutcome } from "../container/contract.js";
+import { type Platform, peekWith } from "../container/listing.js";
+import { openWith } from "../container/open.js";
 import { type Target, urlRefusal } from "../container/target.js";
 import { fileSource } from "../io/file.js";
+import { inflateByZlib } from "../io/inflate-node.js";
 import type { Source } from "../io/source.js";
 import { isHttpUrl, namesAuthority } from "../io/url.js";
 import { urlSource } from "../io/url-node.js";
-import type { SubtitleOptions } from "../subtitle/options.js";
-import { peekSubtitlesFrom } from "../subtitle/peek.js";
-import type { ListedTrack } from "../tracks/list.js";
-import type { SubtitleTrack } from "../tracks/subtitle.js";
-import type { RefusalCode } from "../vocabulary.js";
+import type { Abortable, RefusalCode } from "../vocabulary.js";
 
 /**
- * Peeks at a container's subtitles.
+ * Peeks at a container's track list.
  *
- * For examples beyond file paths, see the same name in `mkvpeek/browser`.
- *
- * @example
- * const { code, tracks } = await peekSubtitles(path);
- *
- * @example
- * // The list alone, one read of the head and no bodies. Bodies cost the index or a walk.
- * const { code, tracks } = await peekSubtitles(path, { text: false });
- */
-export function peekSubtitles(
-  target: Target,
-  options: SubtitleOptions = {},
-): Promise<PeekOutcome<SubtitleTrack>> {
-  return peekWith(PLATFORM, target, options, peekSubtitlesFrom);
-}
-
-/**
- * Peeks at a container's track list
- *
- * Track-level facts only, every kind flat in one array.
- *
- * For examples beyond file paths, see the same name in `mkvpeek/browser`.
+ * It reads only the header, and answers every type of track in one array.
  *
  * @example
  * const { tracks, info, attachments } = await peekTracks(path, {
@@ -49,14 +26,30 @@ export function peekSubtitles(
  *   attachments: true,
  * });
  */
-export function peekTracks(
-  target: Target,
-  options: PeekOptions = {},
-): Promise<PeekOutcome<ListedTrack>> {
-  return peekWith(PLATFORM, target, options, peekTracksFrom);
+export function peekTracks(target: Target, options?: PeekOptions): Promise<PeekOutcome> {
+  return peekWith(PLATFORM, target, options);
 }
 
-const PLATFORM: Platform = { open: viaPath };
+/**
+ * Opens a container for its tracks' frames, and keeps the target open until `close`.
+ *
+ * It reads what `peekTracks` reads with `info`,
+ * and throws a refusal at the open or at a read as a `RefusalError`.
+ *
+ * @example
+ * const container = await openContainer(path);
+ * try {
+ *   const subtitles = container.tracks.filter((track) => track.type === "subtitle");
+ *   for await (const frame of container.frames(subtitles)) console.log(frame.trackIndex, frame.data.length);
+ * } finally {
+ *   await container.close();
+ * }
+ */
+export function openContainer(target: Target, options?: Abortable): Promise<Container> {
+  return openWith(PLATFORM, target, options);
+}
+
+const PLATFORM: Platform = { open: viaPath, inflate: inflateByZlib };
 
 /** Opens a string target as a path, or as a URL where it names one. */
 async function viaPath(target: string): Promise<Source | RefusalCode> {

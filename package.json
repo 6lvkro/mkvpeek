@@ -2,7 +2,7 @@
   "name": "mkvpeek",
   "version": "0.1.1",
   "type": "module",
-  "description": "Matroska tracks, container info and subtitle text with no ffmpeg, no native module, and a fraction of the file read",
+  "description": "MKV tracks and subtitles in pure JavaScript, reading a fraction of the file",
   "keywords": [
     "matroska",
     "mkv",
@@ -14,6 +14,7 @@
     "srt",
     "vtt",
     "webvtt",
+    "pgs",
     "ffmpeg",
     "ffprobe"
   ],

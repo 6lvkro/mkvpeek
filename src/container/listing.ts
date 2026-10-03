@@ -1,84 +1,81 @@
-/**
- * The engine that produces an envelope at header depth.
- *
- * Which kind of answer it becomes is decided by the projection plugged in.
- */
-
-import type { Source } from "../io/source.js";
-import { readContainer, type TracksHeader } from "../matroska/header.js";
-import { refusalOf, returnedRefusal } from "../refusal.js";
-import type { Track } from "../tracks/core.js";
-import { allTracks, type ListedTrack } from "../tracks/list.js";
-import {
-  absent,
-  answerOf,
-  type PeekOptions,
-  type PeekOutcome,
-  refused,
-  served,
-  wantsOf,
-} from "./contract.js";
+import { givenSignal, type Inflate, type Source, stopIfAborted } from "../io/source.js";
+import { type OpenedSegment, openSegment, readAttachments, readInfo } from "../matroska/header.js";
+import { refusalOf } from "../refusal.js";
+import { allTracks, type Track } from "../tracks.js";
+import { type Attachment, type ContainerInfo, type PeekCode, RefusalError } from "../vocabulary.js";
+import type { PeekOptions, PeekOutcome } from "./contract.js";
 import { leaseOf, type Opener, type Target } from "./target.js";
 
-/** What an entry lends the operations: how a string target opens. */
+/** What the Node and browser entries do differently. */
 export interface Platform {
   open: Opener;
+  inflate: Inflate;
 }
 
-/** One operation's work over the source a target became. */
-type Work<T extends Track, O extends PeekOptions> = (
-  source: Source,
-  options: O,
-) => Promise<PeekOutcome<T>>;
-
-/** Runs an operation over a target, leased for it and released after it, a refusal answered in the envelope. */
-export async function peekWith<T extends Track, O extends PeekOptions>(
+export async function peekWith(
   platform: Platform,
   target: Target,
-  options: O,
-  work: Work<T, O>,
-): Promise<PeekOutcome<T>> {
-  const asked = { ...options };
+  options: PeekOptions = {},
+): Promise<PeekOutcome> {
+  const { signal: asked, info, attachments } = { ...options };
+  const signal = givenSignal(asked);
+  const wants = { info: info === true, attachments: attachments === true };
   try {
     const lease = await leaseOf(target, platform.open);
     try {
-      return await work(lease.source, asked);
+      return await listed(lease.source, platform.inflate, wants, signal);
     } finally {
       await lease.release?.();
     }
   } catch (error) {
-    const refusal = refusalOf(error, asked.signal);
-    const wants = wantsOf(asked);
-    const absentAnswer = absent(wants);
-    return refused(refusal, absentAnswer);
+    const code = refusalOf(error, signal);
+    const refused = { tracks: [], info: null, attachments: null };
+    return outcomeOf(wants, refused, code);
   }
 }
 
-export async function fromHeader<T extends Track>(
+export async function segmentOf(
   source: Source,
-  options: PeekOptions,
-  projection: (header: TracksHeader) => T[],
-): Promise<PeekOutcome<T>> {
-  const wants = wantsOf(options);
-  const absentAnswer = absent(wants);
-  try {
-    const readOptions = { ...wants, signal: options.signal };
-    const header = await readContainer(source, "tracks", readOptions);
-    if (typeof header === "string") {
-      const refusal = returnedRefusal(header, options.signal);
-      return refused(refusal, absentAnswer);
-    }
-    const projected = projection(header);
-    return served(answerOf(header, projected, wants));
-  } catch (error) {
-    const refusal = refusalOf(error, options.signal);
-    return refused(refusal, absentAnswer);
-  }
+  inflate: Inflate,
+  signal: AbortSignal | undefined,
+): Promise<OpenedSegment> {
+  const opened = await openSegment(source, signal, inflate);
+  if (typeof opened === "string") throw new RefusalError(opened);
+  return opened;
 }
 
-export async function peekTracksFrom(
+interface Wants {
+  info: boolean;
+  attachments: boolean;
+}
+
+interface Listing {
+  tracks: Track[];
+  info: ContainerInfo | null;
+  attachments: Attachment[] | null;
+}
+
+async function listed(
   source: Source,
-  options: PeekOptions = {},
-): Promise<PeekOutcome<ListedTrack>> {
-  return fromHeader(source, options, allTracks);
+  inflate: Inflate,
+  wants: Wants,
+  signal: AbortSignal | undefined,
+): Promise<PeekOutcome> {
+  const opened = await segmentOf(source, inflate, signal);
+  const tracks = allTracks(opened);
+  const info = wants.info ? await readInfo(opened, signal) : null;
+  const attachments = wants.attachments ? await readAttachments(opened, signal) : null;
+  stopIfAborted(signal);
+  const listing = { tracks, info, attachments };
+  return outcomeOf(wants, listing, "served");
+}
+
+function outcomeOf(
+  wants: Wants,
+  { tracks, info, attachments }: Listing,
+  code: PeekCode,
+): PeekOutcome {
+  const infoPart = wants.info ? { info } : {};
+  const attachmentsPart = wants.attachments ? { attachments: attachments ?? [] } : {};
+  return { tracks, ...infoPart, ...attachmentsPart, code };
 }

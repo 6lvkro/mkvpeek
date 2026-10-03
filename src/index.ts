@@ -5,22 +5,24 @@
  */
 
 export type {
+  Abortable,
   Attachment,
+  Container,
   ContainerInfo,
   FetchKnobs,
-  ListedTrack,
+  Frame,
+  FrameFinder,
+  FrameOptions,
+  FramePreset,
+  FrameProgress,
+  FrameTuning,
+  FrameVia,
   PeekCode,
   PeekOptions,
   PeekOutcome,
   RefusalCode,
   Source,
-  SubtitleFinder,
-  SubtitleOptions,
-  SubtitlePreset,
-  SubtitleProgress,
-  SubtitleTrack,
-  SubtitleTuning,
-  SubtitleVia,
+  SubtitleFile,
   Target,
   Track,
   TrackFlags,
@@ -29,6 +31,12 @@ export type {
   Trip,
   UrlOptions,
 } from "./browser.js";
-export { isRefusalCode, worthFallback } from "./browser.js";
-export { peekSubtitles, peekTracks } from "./entry/node.js";
+export {
+  isRefusalCode,
+  RefusalError,
+  subtitleFile,
+  subtitleFiles,
+  worthFallback,
+} from "./browser.js";
+export { openContainer, peekTracks } from "./entry/node.js";
 export { urlSource } from "./io/url-node.js";

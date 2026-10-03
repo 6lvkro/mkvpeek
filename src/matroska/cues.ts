@@ -8,6 +8,7 @@ import {
   type BytesSupply,
   type ClaimedFrame,
   type ClaimOf,
+  type FrameClaim,
   frameIn,
   heldBlockHead,
 } from "./block.js";
@@ -49,7 +50,7 @@ interface LastCluster {
   window: Window;
 }
 
-export async function readFrame<C>(
+export async function readFrame<C extends FrameClaim>(
   windows: WindowIndex,
   point: CuePosition,
   trackNumber: number,
@@ -65,7 +66,7 @@ export async function readFrame<C>(
   return frameOfBlock(windows, outer, clusterTime, window, trackNumber, claim);
 }
 
-export function readCuedFrame<C>(
+export function readCuedFrame<C extends FrameClaim>(
   windows: WindowIndex,
   cued: CuedBlock,
   trackNumber: number,
@@ -167,7 +168,7 @@ const restOfBlock = (windows: WindowIndex, blockAt: number, outer: Element): Ran
     ? { at: blockAt, length: outer.next - blockAt }
     : null;
 
-async function frameOfBlock<C>(
+async function frameOfBlock<C extends FrameClaim>(
   windows: WindowIndex,
   outer: Element,
   clusterTicks: number,

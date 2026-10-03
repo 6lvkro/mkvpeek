@@ -9,7 +9,7 @@ export type Target = Source | ArrayBufferView | ArrayBuffer | string;
 export type Opener = (target: string) => Promise<Source | RefusalCode>;
 
 /** A source a target became, and how to let it go where something was opened for it. */
-interface Lease {
+export interface Lease {
   source: Source;
   release?(): Promise<void>;
 }

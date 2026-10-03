@@ -8,11 +8,7 @@ export function refusalOf(
   signal: AbortSignal | undefined,
   grammar: Extract<RefusalCode, "malformed" | "unreadable"> = "malformed",
 ): RefusalCode {
-  if (error instanceof RefusalError) return returnedRefusal(error.code, signal);
-  return returnedRefusal(E.isGrammarError(error) ? grammar : "source-failed", signal);
-}
-
-/** The refusal a read reached, or cancelled once its signal has fired: the caller stopped first. */
-export function returnedRefusal(code: RefusalCode, signal: AbortSignal | undefined): RefusalCode {
-  return abortReason(signal) !== null ? "cancelled" : code;
+  if (abortReason(signal) !== null) return "cancelled";
+  if (error instanceof RefusalError) return error.code;
+  return E.isGrammarError(error) ? grammar : "source-failed";
 }

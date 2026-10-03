@@ -1,93 +1,45 @@
-import type { Track } from "../tracks/core.js";
-import type { Attachment, ContainerInfo, PeekCode, RefusalCode, Wants } from "../vocabulary.js";
+import type { Frame, FrameOptions } from "../frames/contract.js";
+import type { Track } from "../tracks.js";
+import type { Abortable, Attachment, ContainerInfo, PeekCode } from "../vocabulary.js";
 
-/** The options every entry point shares. */
-export interface PeekOptions {
-  /** Opt in to container-level facts in the envelope. */
+export interface PeekOptions extends Abortable {
   info?: boolean;
-  /** Opt in to attachment metadata in the envelope. */
   attachments?: boolean;
-  /**
-   * The signal that aborts the read.
-   *
-   * The returned {@linkcode PeekOutcome.code} is `cancelled`.
-   *
-   * @example
-   * const stop = new AbortController();
-   * const patience = setTimeout(() => stop.abort(), 5_000);
-   * await peekTracks(url, { signal: stop.signal }).finally(() => clearTimeout(patience));
-   */
-  signal?: AbortSignal;
 }
 
-/**
- * The answer every read returns.
- *
- * Served or refused, it comes as a value and never as a throw.
- */
-export interface PeekOutcome<T extends Track> extends HeaderAnswer<T> {
-  code: PeekCode;
-}
-
-/** What the header answered, as one piece. */
-interface HeaderAnswer<T extends Track> {
-  /** Comes with a refusal too, as long as the header was read. */
+/** A peek's answer, which carries a refusal rather than throwing it. */
+export interface PeekOutcome<T extends Track = Track> {
+  /** Empty on a refusal. */
   tracks: T[];
   info?: ContainerInfo | null;
   attachments?: Attachment[];
+  code: PeekCode;
 }
-
-/** The two opt-in siblings, either what the header read or the absent answer. */
-interface Siblings {
-  info: ContainerInfo | null;
-  attachments: Attachment[];
-}
-
-export const served = <T extends Track>(answer: HeaderAnswer<T>): PeekOutcome<T> => ({
-  ...answer,
-  code: "served",
-});
 
 /**
- * The outcome of a refusal.
+ * A container opened for its tracks' frames.
  *
- * It carries the answer bought if the header was read, and {@linkcode absent} if it was not.
+ * A structured clone of it carries the listing alone.
  */
-export const refused = <T extends Track>(
-  code: RefusalCode,
-  answer: HeaderAnswer<T>,
-): PeekOutcome<T> => ({
-  ...answer,
-  code,
-});
-
-export const wantsOf = (options: PeekOptions): Wants => ({
-  info: options.info === true,
-  attachments: options.attachments === true,
-});
-
-/**
- * The answer when the header was not read.
- *
- * No tracks can exist, and a requested sibling stands as its absent answer.
- */
-export const absent = (wants: Wants): HeaderAnswer<never> => answerOf(ABSENT_SIBLINGS, [], wants);
-
-/** An answer carrying only the siblings that were asked for. */
-export function answerOf<T extends Track>(
-  read: Siblings,
-  tracks: T[],
-  wants: Wants,
-): HeaderAnswer<T> {
-  const answer: HeaderAnswer<T> = { tracks };
-  if (wants.info) {
-    answer.info = read.info;
-  }
-  if (wants.attachments) {
-    answer.attachments = read.attachments;
-  }
-  return answer;
+export interface Container {
+  readonly tracks: Track[];
+  readonly info: ContainerInfo;
+  /** Read by the first call that asks, and kept. */
+  attachments(options?: Abortable): Promise<Attachment[]>;
+  /**
+   * Whether `frames` reads a track's type and its encodings,
+   * as it reads no type other than subtitle and no frames stored in an encoding this reader does not undo.
+   *
+   * It throws a `TypeError` for a track that does not state, value for value, one of the tracks listed at the open.
+   */
+  readable(track: Track): boolean;
+  /**
+   * Reads the frames of the given tracks in one plan and in file order.
+   *
+   * Before a byte is read, it refuses a track that is not `readable`,
+   * and throws a `TypeError` for a track that does not state, value for value, one of the tracks listed at the open.
+   */
+  frames(tracks: readonly Track[], options?: FrameOptions): AsyncIterableIterator<Frame>;
+  /** Ends the reads still running as `cancelled` and closes what the open opened. */
+  close(): Promise<void>;
 }
-
-/** The absent answer for siblings that were not read: info is null, attachments an empty list. */
-const ABSENT_SIBLINGS: Siblings = { info: null, attachments: [] };

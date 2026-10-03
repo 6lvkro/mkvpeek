@@ -1,5 +1,3 @@
-/** The words below the parser boundary: refusals and codes, delivery requests, container facts. */
-
 /**
  * The flags whose structure the spec dictates.
  *
@@ -39,12 +37,6 @@ export interface TrackTag {
   value: string;
 }
 
-/** What was asked to be delivered in the envelope. */
-export interface Wants {
-  info: boolean;
-  attachments: boolean;
-}
-
 /**
  * The reasons a requested read could not be completed.
  *
@@ -58,7 +50,7 @@ export interface Wants {
  *
  * - `invalid-target`: the input itself cannot be opened; fix the call.
  *
- * - `cancelled`: the caller's signal fired.
+ * - `cancelled`: the caller's signal fired, or the container was closed.
  */
 export type RefusalCode =
   | "not-matroska"
@@ -76,10 +68,19 @@ export type RefusalCode =
  */
 export type PeekCode = "served" | RefusalCode;
 
-/** The two paths of a subtitle read. */
-export type SubtitleFinder = "index" | "walk";
+export interface Abortable {
+  /**
+   * Stops this call alone, which then ends `cancelled` and reports nothing after.
+   *
+   * @example
+   * const stop = new AbortController();
+   * const patience = setTimeout(() => stop.abort(), 5_000);
+   * await peekTracks(url, { signal: stop.signal }).finally(() => clearTimeout(patience));
+   */
+  signal?: AbortSignal;
+}
 
-/** A refusal thrown on the way to an answer, carrying the code that answer gives. */
+/** A refusal an open, a read of frames or `attachments` throws, carrying the code `peekTracks` answers with. */
 export class RefusalError extends Error {
   readonly code: RefusalCode;
 
@@ -94,21 +95,18 @@ export class RefusalError extends Error {
  * Whether the outcome is a refusal rather than a serve.
  *
  * @example
- * const { code } = await peekSubtitles(path);
+ * const { code } = await peekTracks(path);
  * if (isRefusalCode(code)) throw new Error(code);
  */
 export const isRefusalCode = (code: PeekCode): code is RefusalCode => Object.hasOwn(REFUSALS, code);
 
 /**
- * Whether a file this reader refused is worth handing to another tool, ffmpeg say
+ * Whether a file this reader refused is worth handing to another tool, ffmpeg say.
  *
- * The test is whether another tool could do better with the same source,
- * and a true is no guarantee of its success.
- * A refusal that read the container is true;
- * one where the bytes did not arrive or the call was wrong is false.
+ * Yes for a refusal that read the container; no where the bytes did not arrive or the call was wrong.
  *
  * @example
- * const { code, tracks } = await peekSubtitles(path);
+ * const { code, tracks } = await peekTracks(path);
  * if (!isRefusalCode(code)) return tracks;
  * if (worthFallback(code)) return demux(path);
  * throw new Error(code);

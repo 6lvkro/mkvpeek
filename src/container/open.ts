@@ -1,0 +1,234 @@
+import { claimFor, type FrameFile } from "../frames/claim.js";
+import type { Frame, FrameOptions } from "../frames/contract.js";
+import { framesOf } from "../frames/read.js";
+import { settledFrameOptions } from "../frames/tuning.js";
+import {
+  forwardAbort,
+  givenSignal,
+  type Inflate,
+  linkedSignal,
+  type Source,
+  stopIfAborted,
+  untilAborted,
+} from "../io/source.js";
+import {
+  type OpenedSegment,
+  readAttachments,
+  readCues,
+  readFirstClusterTicks,
+  readInfo,
+  type TrackEntry,
+} from "../matroska/header.js";
+import { refusalOf } from "../refusal.js";
+import { subtitleWitnessOf } from "../subtitle/witness.js";
+import { allTracks, type Track, trackOf } from "../tracks.js";
+import {
+  type Abortable,
+  type Attachment,
+  type ContainerInfo,
+  RefusalError,
+} from "../vocabulary.js";
+import type { Container } from "./contract.js";
+import { type Platform, segmentOf } from "./listing.js";
+import { type Lease, leaseOf, type Target } from "./target.js";
+
+export async function openWith(
+  platform: Platform,
+  target: Target,
+  options: Abortable = {},
+): Promise<Container> {
+  const signal = givenSignal({ ...options }.signal);
+  try {
+    const lease = await leaseOf(target, platform.open);
+    return await leased(lease, platform.inflate, signal);
+  } catch (error) {
+    const refusal = refusalOf(error, signal);
+    throw new RefusalError(refusal);
+  }
+}
+
+type PartRead<T> = (signal: AbortSignal) => Promise<T>;
+
+interface SharedRead<T> {
+  answer: Promise<T>;
+  stop: AbortController;
+  waiters: number;
+}
+
+class LeasedContainer implements Container {
+  readonly tracks: Track[];
+  readonly info: ContainerInfo;
+  readonly #lease: Lease;
+  readonly #file: FrameFile;
+  readonly #attachments: PartRead<Attachment[]>;
+  readonly #closing = new AbortController();
+  readonly #pending = new Set<Promise<unknown>>();
+  #closed: Promise<void> | null = null;
+
+  constructor(lease: Lease, opened: OpenedSegment, info: ContainerInfo, inflate: Inflate) {
+    const source = withPendingReads(lease.source, this.#pending);
+    const held = { ...opened, source };
+    this.tracks = allTracks(opened);
+    this.info = { ...info };
+    this.#lease = lease;
+    const closing = this.#closing.signal;
+    this.#file = fileOf(held, info, inflate, closing);
+    this.#attachments = sharedAndKept((signal) => readAttachments(held, signal), closing);
+  }
+
+  async attachments(options: Abortable = {}): Promise<Attachment[]> {
+    const callerSignal = givenSignal({ ...options }.signal);
+    const { signal, unlink } = linkedSignal(callerSignal, this.#closing.signal);
+    try {
+      stopIfAborted(signal);
+      const kept = await this.#attachments(signal);
+      return kept.map((attachment) => ({ ...attachment }));
+    } catch (error) {
+      const refusal = refusalOf(error, signal);
+      throw new RefusalError(refusal);
+    } finally {
+      unlink();
+    }
+  }
+
+  readable(track: Track): boolean {
+    const entry = entryOf(this.#file, track);
+    return claimFor(entry, this.#file) !== null;
+  }
+
+  frames(tracks: readonly Track[], options: FrameOptions = {}): AsyncIterableIterator<Frame> {
+    const entries = entriesOf(this.#file, tracks);
+    const callerOptions = { ...options };
+    const settled = settledFrameOptions(callerOptions, this.#lease.source.trip);
+    return framesOf(this.#file, entries, settled, this.#closing.signal);
+  }
+
+  close(): Promise<void> {
+    this.#closed ??= this.#shut();
+    return this.#closed;
+  }
+
+  async #shut(): Promise<void> {
+    this.#closing.abort();
+    await Promise.allSettled(this.#pending);
+    await this.#lease.release?.();
+  }
+}
+
+async function leased(
+  lease: Lease,
+  inflate: Inflate,
+  signal: AbortSignal | undefined,
+): Promise<Container> {
+  try {
+    const opened = await segmentOf(lease.source, inflate, signal);
+    const info = await readInfo(opened, signal);
+    stopIfAborted(signal);
+    return new LeasedContainer(lease, opened, info, inflate);
+  } catch (error) {
+    await lease.release?.();
+    throw error;
+  }
+}
+
+function withPendingReads(source: Source, pending: Set<Promise<unknown>>): Source {
+  const read: Source["read"] = (...args) => {
+    // Against its type, a source in JavaScript may answer the bytes rather than a promise of them.
+    const reading = Promise.resolve(source.read(...args));
+    pending.add(reading);
+    const forget = () => pending.delete(reading);
+    reading.then(forget, forget);
+    return reading;
+  };
+  return { ...source, read };
+}
+
+/**
+ * A part read once for the callers that ask while it is read, and kept once a read of it succeeds.
+ *
+ * A caller whose signal fires stops waiting, and the read stops when no caller waits or the file closes.
+ */
+function sharedAndKept<T>(read: PartRead<T>, closing: AbortSignal): PartRead<T> {
+  let kept: { value: T } | null = null;
+  let shared: SharedRead<T> | null = null;
+  const start = (): SharedRead<T> => {
+    const stop = new AbortController();
+    const unlink = forwardAbort([closing], stop);
+    const answer = read(stop.signal);
+    answer.then((value) => {
+      kept = { value };
+      unlink();
+    }, unlink);
+    return { answer, stop, waiters: 0 };
+  };
+  return async (signal) => {
+    if (kept !== null) return kept.value;
+    stopIfAborted(signal);
+    shared ??= start();
+    const current = shared;
+    current.waiters += 1;
+    try {
+      return await untilAborted(current.answer, signal);
+    } finally {
+      current.waiters -= 1;
+      if (current.waiters === 0) {
+        shared = null;
+        current.stop.abort();
+      }
+    }
+  };
+}
+
+function fileOf(
+  opened: OpenedSegment,
+  info: ContainerInfo,
+  inflate: Inflate,
+  closing: AbortSignal,
+): FrameFile {
+  const firstClusterTicks = sharedAndKept(
+    (signal) => readFirstClusterTicks(opened, signal),
+    closing,
+  );
+  const cues = sharedAndKept((signal) => readCues(opened, signal), closing);
+  return { ...opened, info, inflate, witnessOf: subtitleWitnessOf, firstClusterTicks, cues };
+}
+
+function entriesOf(file: FrameFile, tracks: readonly Track[]): TrackEntry[] {
+  const chosen = new Set<TrackEntry>();
+  for (const track of tracks) chosen.add(entryOf(file, track));
+  return file.trackEntries.filter((entry) => chosen.has(entry));
+}
+
+function entryOf(file: FrameFile, track: Track): TrackEntry {
+  const { index } = track;
+  const entry = Number.isInteger(index) ? file.trackEntries[index] : undefined;
+  if (entry !== undefined) {
+    const own = trackOf(file, entry);
+    if (statesTheSame(track, own)) return entry;
+  }
+  throw new TypeError(`track ${String(index)} is not a track of this file`);
+}
+
+function statesTheSame(given: unknown, own: unknown): boolean {
+  if (typeof own !== "object" || own === null) return Object.is(given, own);
+  if (own instanceof Uint8Array) return sameBytes(given, own);
+  if (typeof given !== "object" || given === null) return false;
+  if (Array.isArray(given) !== Array.isArray(own)) return false;
+  const theirs = given as Record<string, unknown>;
+  if (Array.isArray(own) && theirs.length !== own.length) return false;
+  const ours = own as Record<string, unknown>;
+  const keys = Object.keys(ours);
+  const theirKeys = new Set(Object.keys(theirs));
+  const sameKeys = keys.length === theirKeys.size && keys.every((key) => theirKeys.has(key));
+  return sameKeys && keys.every((key) => statesTheSame(theirs[key], ours[key]));
+}
+
+function sameBytes(given: unknown, own: Uint8Array): boolean {
+  if (!ArrayBuffer.isView(given)) return false;
+  const items = given as Uint8Array;
+  if (items.BYTES_PER_ELEMENT !== 1 || items.length !== own.length) return false;
+  for (let at = 0; at < own.length; at++) {
+    if (items[at] !== own[at]) return false;
+  }
+  return true;
+}

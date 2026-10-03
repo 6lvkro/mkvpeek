@@ -10,7 +10,7 @@ export interface Source {
   /**
    * The length in bytes.
    *
-   * @param signal The reading peek's own, for a source that has to fetch to know.
+   * @param signal The signal of the read that asks, for a source that has to fetch to know.
    */
   size(signal?: AbortSignal): Promise<number>;
   /**
@@ -18,13 +18,10 @@ export interface Source {
    *
    * A short answer anywhere but at the end of the file is read as the source having stopped.
    *
-   * @param into A reuse hint.
-   * A cooperating source writes there and returns that subarray, and may ignore it;
-   * either way the returned view is the truth.
-   * Touching it again after resolve breaks the contract,
-   * and a late write changes the bytes of whoever holds the borrowed window.
+   * @param into A buffer the source may write into and return a subarray of, or ignore;
+   * the returned view is what counts. It must not be touched once the read resolves.
    *
-   * @param signal The reading peek's own, for a source that can cut a read in flight.
+   * @param signal The signal of the read that asks, for a source that can cut a read in flight.
    */
   read(at: number, length: number, into?: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>;
   close?(): Promise<void>;
@@ -85,9 +82,16 @@ export interface WalkFetch {
   concurrency: number;
 }
 
+/**
+ * Undoes zlib's deflate into a buffer of its own.
+ *
+ * It rejects bytes past the stream's end, and a stream that inflates past `most` bytes, which it stops inflating there.
+ */
+export type Inflate = (deflated: Uint8Array, most: number) => Promise<Uint8Array>;
+
 export interface Watch {
   onProgress: ReportBytes;
-  signal: AbortSignal | undefined;
+  signal: AbortSignal;
 }
 
 type ReportBytes = (done: number, total: number) => void;
@@ -108,6 +112,9 @@ export const LARGE_READ_BYTES = 16 * 1024;
 
 export const MAX_SPAN_BYTES = 4 * 1024 ** 2;
 
+/** The most a stored stream is undone to however much it stored, where ffmpeg stops growing a frame's buffer. */
+export const MAX_INFLATED_BYTES = 10_000_000;
+
 /**
  * Lends the front of the hint when it can hold the clamped answer.
  *
@@ -116,9 +123,17 @@ export const MAX_SPAN_BYTES = 4 * 1024 ** 2;
 export const lend = (into: Uint8Array | undefined, bounded: number): Uint8Array | null =>
   into !== undefined && into.length >= bounded ? into.subarray(0, bounded) : null;
 
+export const givenSignal = (signal: AbortSignal | null | undefined): AbortSignal | undefined =>
+  signal ?? undefined;
+
 export function abortReason(signal: AbortSignal | undefined): Error | null {
   if (signal?.aborted !== true) return null;
-  return signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason));
+  const { reason: cause } = signal;
+  try {
+    return cause instanceof Error ? cause : new Error(String(cause));
+  } catch {
+    return new Error("aborted", { cause });
+  }
 }
 
 export function stopIfAborted(signal: AbortSignal | undefined): void {
@@ -127,9 +142,9 @@ export function stopIfAborted(signal: AbortSignal | undefined): void {
 }
 
 /** A Watch whose report cannot end the read by throwing, and is not made once the signal fires. */
-export function watchOver(signal: AbortSignal | undefined, report: ReportBytes): Watch {
+export function watchOver(signal: AbortSignal, report: ReportBytes): Watch {
   const onProgress: ReportBytes = (done, total) => {
-    if (signal?.aborted === true) return;
+    if (signal.aborted) return;
     let returned: unknown;
     try {
       returned = report(done, total);
@@ -145,6 +160,58 @@ export function available(at: number, length: number, size: number): number {
     throw new RangeError(`a read asked for ${String(length)} bytes at ${String(at)}`);
   }
   return Math.max(0, Math.min(length, size - at));
+}
+
+/** A signal that fires when either does, and the call that stops it listening to them. */
+export function linkedSignal(
+  outer: AbortSignal | undefined,
+  inner: AbortSignal,
+): { signal: AbortSignal; unlink: () => void } {
+  const linked = new AbortController();
+  const unlink = forwardAbort([outer, inner], linked);
+  return { signal: linked.signal, unlink };
+}
+
+/**
+ * Aborts `into` with the reason of the first of the signals to fire, and from then listens to none.
+ *
+ * The call it answers stops the listening sooner.
+ */
+export function forwardAbort(
+  signals: ReadonlyArray<AbortSignal | undefined>,
+  into: AbortController,
+): () => void {
+  const unhooks: Array<() => void> = [];
+  const unlink = () => {
+    for (const unhook of unhooks.splice(0)) unhook();
+  };
+  for (const signal of signals) {
+    if (signal === undefined) continue;
+    const fired = () => {
+      unlink();
+      into.abort(signal.reason);
+    };
+    unhooks.push(onAbort(signal, fired));
+    if (into.signal.aborted) break;
+  }
+  return unlink;
+}
+
+/** The answer, or a rejection with the signal's reason where the signal fires first. */
+export function untilAborted<T>(answer: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const unhook = onAbort(signal, () => reject(abortReason(signal)));
+    answer.then(
+      (value) => {
+        unhook();
+        resolve(value);
+      },
+      (error: unknown) => {
+        unhook();
+        reject(error);
+      },
+    );
+  });
 }
 
 export function onAbort(signal: AbortSignal | undefined, run: () => void): () => void {

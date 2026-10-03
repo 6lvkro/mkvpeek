@@ -1,4 +1,4 @@
-import { abortReason, onAbort, stopIfAborted } from "./source.js";
+import { onAbort, stopIfAborted, untilAborted } from "./source.js";
 
 type Gathered<T extends readonly (() => Promise<unknown>)[]> = {
   [K in keyof T]: Awaited<ReturnType<T[K]>>;
@@ -11,6 +11,12 @@ export class HaltableQueue<T> {
   #closed = false;
   #halted = false;
   #parked: Array<() => void> = [];
+  readonly #onHalt: () => void;
+
+  /** @param onHalt Told of every halt, whoever makes it. */
+  constructor(onHalt: () => void = () => {}) {
+    this.#onHalt = onHalt;
+  }
 
   get halted(): boolean {
     return this.#halted;
@@ -30,6 +36,7 @@ export class HaltableQueue<T> {
     this.#halted = true;
     this.#closed = true;
     this.#wake();
+    this.#onHalt();
   }
 
   async drain(
@@ -100,22 +107,8 @@ export async function joinOrAbort(
   signal: AbortSignal | undefined,
 ): Promise<void> {
   const join = Promise.allSettled(lanes);
-  let settled = join;
-  let unhook = () => {};
-  if (signal !== undefined) {
-    const abortPromise = new Promise<never>((_, reject) => {
-      unhook = onAbort(signal, () => {
-        reject(abortReason(signal));
-      });
-    });
-    settled = Promise.race([join, abortPromise]);
-  }
-  try {
-    for (const one of await settled) {
-      if (one.status === "rejected") throw one.reason as Error;
-    }
-  } finally {
-    unhook();
+  for (const one of await untilAborted(join, signal)) {
+    if (one.status === "rejected") throw one.reason as Error;
   }
 }
 
@@ -149,7 +142,7 @@ async function runWorkers<T>(
     }
   };
   try {
-    const lanes = Array.from({ length: Math.max(1, concurrency) }, worker);
+    const lanes = Array.from({ length: concurrency }, worker);
     await joinOrAbort(lanes, signal);
   } finally {
     unhook();

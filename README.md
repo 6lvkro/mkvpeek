@@ -1,18 +1,18 @@
 # mkvpeek
 
-Looks at the tracks of a Matroska container without demuxing the whole of it.
+MKV tracks and subtitles in pure JavaScript, reading a fraction of the file.
 
 ```text
-Measured on a 2.2 GB file on a local NVMe drive
+Measured on a 2.3 GB file on a local NVMe drive
 
-ffprobe -show_streams video.mkv                      1.2 MB read   21 ms
-peekTracks("video.mkv")                              135 KB read   0.6 ms
+ffprobe -show_streams video.mkv                      1.3 MB read   22 ms
+peekTracks("video.mkv")                              135 KB read   0.9 ms
 
-ffmpeg -i video.mkv -map 0:s:0 -c:s copy out.ass     2.2 GB read   609 ms
-peekSubtitles("video.mkv")                           1.6 MB read   60 ms
+ffmpeg -i video.mkv -map 0:s:0 -c:s copy out.ass     2.3 GB read   659 ms
+subtitleFile(firstSubtitle, frames)                  501 KB read   24 ms
 ```
 
-The two `peek` lines are calls made from a Node process that is already running; the two tools are timed from being spawned as a subprocess to their exit.
+The mkvpeek lines are timed in a Node process that is already running, the second from opening the file to writing its first subtitle track out; the two tools, from being spawned to their exit.
 
 It performs well when both hold: a low-latency link and the fast path (see [path selection](#constraints-and-read-path-selection)).
 
@@ -21,10 +21,9 @@ It performs well when both hold: a low-latency link and the fast path (see [path
 - You want the track list and the container info without an external demuxer
 - You need to read a container in the browser with no WASM dependency
 - The container sits on a server that allows Range requests
-- You need a subtitle track as a whole, not as a stream of events
-- You want a subtitle track extracted quickly, with fewer reads (or less transfer)
+- You want a subtitle track, quickly and with fewer reads (or less transfer)
 
-Assembling a body is, for now, the subtitle track's alone, and it supports the `ASS` / `SSA` / `SRT` / `VTT` formats.
+A frame is what the track stored, in its own format: an ASS line as its block holds it, a PGS display set, a WebVTT cue's three parts.
 
 ## Install
 
@@ -36,24 +35,48 @@ Node 22.1 or later, no other dependencies.
 
 ## Usage
 
-There are two entry points, and a refusal answers with a code instead of throwing.
+There are two entry points: `peekTracks` and `openContainer`.
 
-`peekTracks` reads only the header and returns every kind of track; `peekSubtitles` returns subtitle tracks with their bodies.
+`peekTracks` reads only the header and returns every kind of track in `tracks`, and `info` and `attachments` when asked for. It answers a refusal with a `code` instead of throwing.
 
 ```ts
-import { peekSubtitles, peekTracks, urlSource } from "mkvpeek";
+import { peekTracks } from "mkvpeek";
 
-// A file path (Node only)
-await peekTracks("video.mkv");
-await peekSubtitles("video.mkv");
+// A file path (Node only), a URL whose server allows Range requests, or bytes
+const { code, tracks, info } = await peekTracks("video.mkv", { info: true });
+// code is "served" unless refused
+```
 
-// A URL, when the server allows Range requests
-await peekTracks("https://host/video.mkv");
+`openContainer` reads the same header and keeps the file open, so the frames of the tracks you pick are read in one plan, and the attachments when you ask for them.
 
-// A Uint8Array or an ArrayBuffer
-await peekTracks(bytes);
+```ts
+import { writeFile } from "node:fs/promises";
+import { openContainer, RefusalError, subtitleFiles } from "mkvpeek";
 
-// For options the package cannot predefine, open the source yourself; whoever opens it closes it.
+try {
+  const container = await openContainer("video.mkv");
+  try {
+    for (const { track, format, text } of await subtitleFiles(container)) {
+      await writeFile(`${track.index}.${format}`, text);
+    }
+  } finally {
+    await container.close();
+  }
+} catch (error) {
+  if (!(error instanceof RefusalError)) throw error;
+  // error.code says why
+}
+```
+
+`subtitleFiles` reads, in one plan, every ASS, SSA, SubRip or WebVTT track of `container.tracks` that `subtitleFile` can write and `readable` answers true for, and writes each one out.
+It asks `frames` for no other track, and writes nothing where the read is refused.
+For any other choice of tracks, `frames` reads the tracks you pass, `readable` says which types and encodings it reads, and `subtitleFile` writes one track out from the frames.
+
+For options the package cannot predefine, open the source yourself; whoever opens it closes it.
+
+```ts
+import { peekTracks, urlSource } from "mkvpeek";
+
 const source = await urlSource(url, { headers });
 try {
   await peekTracks(source);
@@ -62,16 +85,13 @@ try {
 }
 ```
 
-If the bytes are already in hand, just pass them.
-
-But **reading a file up front only to pass it in throws away the benefit of reading just what is needed.**
-The links where that benefit is worth giving up are discussed at the end of [path selection](#constraints-and-read-path-selection).
+If the bytes are already in hand, just pass them. But **reading a file up front only to pass it in throws away the benefit of reading just what is needed**; the links where that is worth giving up are at the end of [path selection](#constraints-and-read-path-selection).
 
 ```ts
-import { peekSubtitles } from "mkvpeek/browser";
+import { openContainer } from "mkvpeek/browser";
 
 // A source that reads a File lazily
-await peekSubtitles({
+const container = await openContainer({
   size: () => Promise.resolve(file.size),
   read: async (at, n) => new Uint8Array(await file.slice(at, at + n).arrayBuffer()),
 });
@@ -81,21 +101,30 @@ In the browser, `mkvpeek/browser` is the same reader minus file paths.
 
 ## Constraints and read path selection
 
-> The read path does not apply to `peekTracks`, which reads only the header; it applies only when subtitle bodies are involved.
+Frames are, for now, the subtitle tracks' alone. Where a track's frames are stored encoded, it undoes `zlib` and `header stripping`, and refuses a read of any other encoding, or of another kind of track, before it fetches a frame.
 
 Matroska containers usually carry `Cues`, a list of frame positions, but the list can be short or wrong.
-So that a subtitle body the caller asked for is not silently lost when the list falls short,
+So that a frame the caller asked for is not silently lost when the list falls short,
 the default is to back off the fast path (`index`) and retry along the slow path (`walk`), which visits every cluster.
+Only the slow path streams its frames; the fast path vouches for all of them before handing any over.
 
-Even with `walk`, though, the range of containers this handles falls short of the external tools.
-If an external tool is available, the recommendation is to use the fast path (`index`) explicitly and hand refused files to that tool.
-On containers where `index` works, both speed and transfer come out well ahead of the binaries, and that alone makes it worth it.
+Even with `walk`, this handles fewer containers than the external tools, so where one is available, read by `index` explicitly and hand refused files to that tool; where `index` works, it is well ahead of the binaries in both speed and transfer.
 
 ```ts
-import { peekSubtitles, worthFallback } from "mkvpeek";
+import { openContainer, RefusalError, worthFallback } from "mkvpeek";
 
-const { code, tracks } = await peekSubtitles(path, { via: "index" });
-if (worthFallback(code)) await demux(path);
+try {
+  const container = await openContainer(path);
+  try {
+    const subtitles = container.tracks.filter((track) => track.type === "subtitle");
+    for await (const frame of container.frames(subtitles, { via: "index" })) use(frame);
+  } finally {
+    await container.close();
+  }
+} catch (error) {
+  if (!(error instanceof RefusalError) || !worthFallback(error.code)) throw error;
+  await demux(path);
+}
 ```
 
 On a high-latency network link the slow path (`walk`) loses much of its speed to round trips,
@@ -105,15 +134,21 @@ The package does not provide a download path of its own, and it refuses any resp
 
 ## Oracle
 
-Expected output is verified against ffprobe and ffmpeg, and the deliberate exceptions are, so far, these two.
+Expected output is verified against ffprobe and ffmpeg, and the deliberate exceptions are, so far, these four.
 
 - **When a track does not state its `language`**
   ffprobe emits `eng` as a default; the package emits `null`.
 
-- **When a frame in the body does not state its `duration`**
-  ffmpeg uses a derived value; the package uses 0.
+- **When a frame states no `duration`, or states zero**
+  ffmpeg may fill one in from a later frame; the package emits `null` or `0`.
 
-If something the spec defines is distorted or lost in a non-refused return, outside these two, it can be treated as a bug.
+- **When a WebVTT block does not split the way ffmpeg splits one**
+  ffmpeg drops the cue; the package keeps it.
+
+- **When a file's media does not start where its first cluster does**
+  every timestamp differs from ffmpeg's by that gap.
+
+If something the spec defines is distorted or lost in a non-refused return, outside these four, it can be treated as a bug.
 
 ## License
 

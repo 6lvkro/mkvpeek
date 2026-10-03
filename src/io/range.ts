@@ -1,9 +1,10 @@
 import {
   abortReason,
   available,
+  forwardAbort,
+  givenSignal,
   HEAD_BYTES,
   lend,
-  onAbort,
   type Source,
   stopIfAborted,
 } from "./source.js";
@@ -44,12 +45,13 @@ export const bytesRange = (from: number, to: number): string =>
 export function rangeSource(
   url: string,
   transport: OwnedTransport,
-  { stallMs, signal }: RangeOptions,
+  { stallMs, signal: given }: RangeOptions,
 ): Source {
   const stall =
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
       ? stallMs
       : null;
+  const signal = givenSignal(given);
   // A source whose own signal has already fired refuses at the open,
   // before it asks the server anything.
   stopIfAborted(signal);
@@ -60,8 +62,9 @@ export function rangeSource(
     bought ??= await readHead(invariants, signal);
     return bought;
   };
-  const size = async (signal?: AbortSignal) => (await headFor(signal)).total;
-  const read = async (at: number, length: number, into?: Uint8Array, signal?: AbortSignal) => {
+  const size = async (given?: AbortSignal) => (await headFor(givenSignal(given))).total;
+  const read = async (at: number, length: number, into?: Uint8Array, given?: AbortSignal) => {
+    const signal = givenSignal(given);
     const { total, head } = await headFor(signal);
     const bounded = available(at, length, total);
     if (bounded === 0) return new Uint8Array(0);
@@ -274,10 +277,10 @@ function watchdog(
     timer = setTimeout(stall, stallMs);
   };
   alive();
-  const unhooks = held.map((caller) => onAbort(caller, () => controller.abort(caller.reason)));
+  const unlink = forwardAbort(held, controller);
   const off = () => {
     clearTimeout(timer);
-    for (const unhook of unhooks) unhook();
+    unlink();
   };
   return { signal: controller.signal, alive, off };
 }

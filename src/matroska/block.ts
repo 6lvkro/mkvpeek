@@ -1,6 +1,7 @@
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
 import { headerNeed } from "./chain.js";
+import type { Undo } from "./encoding.js";
 
 /**
  * The hand that supplies bytes.
@@ -9,8 +10,12 @@ import { headerNeed } from "./chain.js";
  */
 export type BytesSupply = (at: number, need: number) => Promise<Window>;
 
+export interface FrameClaim {
+  undo: Undo | null;
+}
+
 /** A block's frame, under the claim its track was read by. */
-export interface ClaimedFrame<C> {
+export interface ClaimedFrame<C extends FrameClaim = FrameClaim> {
   claim: C;
   startTicks: number;
   durationTicks: number | null;
@@ -18,7 +23,7 @@ export interface ClaimedFrame<C> {
 }
 
 /** The claim a block's TrackNumber is read under, or null for a track nobody chose. */
-export type ClaimOf<C> = (trackNumber: number) => C | null;
+export type ClaimOf<C extends FrameClaim> = (trackNumber: number) => C | null;
 
 interface BlockHead {
   trackNumber: number;
@@ -46,6 +51,7 @@ export const BLOCK_REFUSAL = {
   blockHead: "block-head",
   laced: "laced",
   shortHead: "short-head",
+  undecodable: "undecodable",
 } as const;
 
 export type BlockClause = (typeof BLOCK_REFUSAL)[keyof typeof BLOCK_REFUSAL];
@@ -57,7 +63,7 @@ export const BLOCK_HEAD_BYTES = 32;
  *
  * An unclaimed track is null, and a rule that stands is its clause.
  */
-export async function frameIn<C>(
+export async function frameIn<C extends FrameClaim>(
   outer: Element,
   clusterTicks: number,
   held: Window,
@@ -108,7 +114,13 @@ export async function frameIn<C>(
   const covering = E.covers(window, head.payloadAt, head.payloadSize)
     ? window
     : await supply(head.payloadAt, head.payloadSize);
-  const payload = E.readBytes(covering, head.payloadAt, head.payloadSize).slice();
+  const stored = E.readBytes(covering, head.payloadAt, head.payloadSize);
+  let payload: Uint8Array;
+  try {
+    payload = claim.undo === null ? stored.slice() : await claim.undo(stored);
+  } catch {
+    return BLOCK_REFUSAL.undecodable;
+  }
   const startTicks = clusterTicks + head.relTicks;
   return { claim, startTicks, durationTicks, payload };
 }

@@ -3,6 +3,7 @@ import * as E from "../ebml.js";
 import { HaltableQueue, joinOrAbort } from "../io/lanes.js";
 import {
   available,
+  linkedSignal,
   type SizedSource,
   stopIfAborted,
   type WalkFetch,
@@ -15,6 +16,7 @@ import {
   type BlockClause,
   type ClaimedFrame,
   type ClaimOf,
+  type FrameClaim,
   frameIn,
 } from "./block.js";
 import {
@@ -25,60 +27,106 @@ import {
   type SegmentPass,
 } from "./chain.js";
 
-export async function walkFrames<C>(
-  pass: SegmentPass,
+/**
+ * Hands over the claimed tracks' frames cluster by cluster, in file order.
+ *
+ * A refusal is a `GrammarError` after the clusters before it, and ending the iteration ends the reads.
+ */
+export async function* walkFrames<C extends FrameClaim>(
+  opened: Omit<SegmentPass, "signal">,
   claims: ReadonlyMap<number, C>,
   knobs: WalkFetch,
-  { onProgress, signal }: Watch,
-): Promise<Map<C, ClaimedFrame<C>[]> | null> {
-  const fileSize = pass.head.fileSize;
-  onProgress(0, fileSize);
+  watch: Watch,
+): AsyncGenerator<ClaimedFrame<C>[]> {
+  const fileSize = opened.head.fileSize;
+  watch.onProgress(0, fileSize);
+  const ended = new AbortController();
+  // The link stops listening once either signal fires, and `ended` fires as the walk ends.
+  const { signal } = linkedSignal(watch.signal, ended.signal);
+  const reading = { ...opened, signal };
   const slotBytes = Math.min(knobs.blockAheadBytes, fileSize);
   const pool = windowPool(slotBytes, knobs.concurrency + 4);
-  const sized = { source: pass.source, fileSize };
-  const walk: WalkInvariants<C> = { sized, claims, knobs, head: pass.head, signal };
-  let done = 0;
-  let refused = false;
+  const sized = { source: opened.source, fileSize };
+  const walk: WalkInvariants<C> = { sized, claims, knobs, head: opened.head, signal };
+  // The hop takes one of the reads; with none to spare for a lane, it walks what it finds.
+  const laneCount = knobs.concurrency - 1;
+  const ahead = Math.max(1, laneCount) * CLUSTERS_AHEAD_PER_LANE;
   const walked = new Map<number, ClaimedFrame<C>[]>();
+  let done = 0;
+  let foundCount = 0;
+  let handedCount = 0;
+  let refused = false;
+  let parked: Array<() => void> = [];
+  const wake = () => {
+    for (const resolve of parked) resolve();
+    parked = [];
+  };
+  const park = () =>
+    new Promise<void>((resolve) => {
+      parked.push(resolve);
+    });
+  const queue = new HaltableQueue<HoppedCluster>(wake);
+  /** Waits until the cluster at `index` may be found; false once the walk has halted. */
+  const admitted = async (index: number) => {
+    while (!queue.halted && index - handedCount >= ahead) {
+      await park();
+      stopIfAborted(signal);
+    }
+    return !queue.halted;
+  };
   const record = (
     index: number,
     span: ClusterSpan,
     outcome: SweptFrames<C> | BlockClause,
   ): outcome is SweptFrames<C> => {
     stopIfAborted(signal);
+    wake();
     if (typeof outcome === "string") {
       refused = true;
       return false;
     }
     walked.set(index, outcome.frames);
     done += outcome.end - span.at;
-    onProgress(done, fileSize);
+    watch.onProgress(done, fileSize);
     return true;
   };
 
-  const queue = new HaltableQueue<QueuedCluster>();
-  let count = 0;
+  const walkAndRecord = async (item: HoppedCluster) => {
+    const outcome = await walkCluster(walk, item.span, pool, item.window);
+    const kept = record(item.index, item.span, outcome);
+    if (kept) outcome.carried.release?.();
+    return kept;
+  };
   const feed = async (): Promise<void> => {
     // the window the previous open walk was carrying
     let seed: Loaned | undefined;
     try {
-      let pos = pass.segment.body;
-      while (!queue.halted) {
-        let openCluster: QueuedCluster | null = null;
-        for await (const { at, el, window } of hopTopLevel(pass, pos)) {
-          if (queue.halted) return;
+      let pos = opened.segment.body;
+      while (await admitted(foundCount)) {
+        let openCluster: HoppedCluster | null = null;
+        for await (const { at, el, window } of hopTopLevel(reading, pos)) {
           if (!TOP_LEVEL_IDS.has(el.id)) {
             refused = true;
             queue.halt();
             return;
           }
-          if (el.id !== E.ID.segment.CLUSTER) continue;
-          if ("open" in el) {
-            openCluster = { index: count++, span: { at, el, end: pass.segment.end }, window };
-            break;
+          if (el.id === E.ID.segment.CLUSTER) {
+            if ("open" in el) {
+              openCluster = {
+                index: foundCount++,
+                span: { at, el, end: opened.segment.end },
+                window,
+              };
+              break;
+            }
+            const sizedCluster = { index: foundCount++, span: { at, el, end: el.next }, window };
+            if (laneCount > 0) {
+              queue.push(sizedCluster);
+            } else if (!(await walkAndRecord(sizedCluster))) {
+              return;
+            }
           }
-          const queued = { index: count++, span: { at, el, end: el.next }, window };
-          queue.push(queued);
+          if (!(await admitted(foundCount))) return;
         }
         if (openCluster === null) break;
         const outcome = await walkCluster(walk, openCluster.span, pool, seed ?? openCluster.window);
@@ -100,40 +148,56 @@ export async function walkFrames<C>(
       // close first, since release is a call that can throw.
       queue.close();
       seed?.release?.();
+      wake();
     }
   };
 
-  const eachCluster = async (item: QueuedCluster) => {
-    const outcome = await walkCluster(walk, item.span, pool, item.window);
-    const kept = record(item.index, item.span, outcome);
-    if (kept) outcome.carried.release?.();
-    return kept;
-  };
   const feeding = feed();
-  if (knobs.concurrency < 2) {
-    await feeding.then(
-      () => {},
-      () => {},
-    );
+  const draining = queue.drain(laneCount, walkAndRecord, signal);
+  let finished = false;
+  const failures: unknown[] = [];
+  const settled = joinOrAbort([feeding, draining], signal).then(
+    () => {
+      finished = true;
+      wake();
+    },
+    (error: unknown) => {
+      failures.push(error);
+      finished = true;
+      wake();
+    },
+  );
+  try {
+    for (;;) {
+      const frames = walked.get(handedCount);
+      if (frames !== undefined) {
+        walked.delete(handedCount);
+        handedCount += 1;
+        wake();
+        if (frames.length > 0) yield frames;
+        continue;
+      }
+      if (finished) break;
+      await park();
+    }
+    if (failures.length > 0) throw failures[0];
+    if (refused) throw new E.GrammarError();
+    watch.onProgress(fileSize, fileSize);
+    stopIfAborted(watch.signal);
+  } finally {
+    ended.abort();
+    queue.halt();
+    await settled;
   }
-  const laneCount = Math.max(1, knobs.concurrency - 1);
-  const draining = queue.drain(laneCount, eachCluster, signal);
-  await joinOrAbort([feeding, draining], signal);
-
-  stopIfAborted(signal);
-  if (refused || count === 0) return null;
-  onProgress(fileSize, fileSize);
-  stopIfAborted(signal);
-  return merged(walked);
 }
 
 /** The invariants of one walk. */
-interface WalkInvariants<C> {
+interface WalkInvariants<C extends FrameClaim> {
   sized: SizedSource;
   claims: ReadonlyMap<number, C>;
   knobs: WalkFetch;
   head: Window;
-  signal: AbortSignal | undefined;
+  signal: AbortSignal;
 }
 
 /**
@@ -147,19 +211,19 @@ interface ClusterSpan {
   end: number;
 }
 
-type SweptFrames<C> = {
+interface SweptFrames<C extends FrameClaim> {
   frames: ClaimedFrame<C>[];
   end: number;
-};
+}
 
-type WalkedCluster<C> = (SweptFrames<C> & { carried: Loaned }) | BlockClause;
+type WalkedCluster<C extends FrameClaim> = (SweptFrames<C> & { carried: Loaned }) | BlockClause;
 
 /**
  * A cluster the hop measured and put in the worker queue.
  *
  * The window is the one the hop read the head from, so it becomes the walk's first probe.
  */
-interface QueuedCluster {
+interface HoppedCluster {
   index: number;
   span: ClusterSpan;
   window: Window;
@@ -186,10 +250,13 @@ const CLUSTER_END_IDS = new Set<number>(Object.values(E.ID.segment));
  */
 const TOP_LEVEL_IDS = new Set<number>([...CLUSTER_END_IDS, ...Object.values(E.ID.global)]);
 
+/** How many clusters per lane the walk may find ahead of the one it hands over next. */
+const CLUSTERS_AHEAD_PER_LANE = 4;
+
 /** A BlockGroup child sitting directly under the cluster is a stray block. */
 const STRAY_IDS = new Set<number>(Object.values(E.ID.blockGroup));
 
-async function walkCluster<C>(
+async function walkCluster<C extends FrameClaim>(
   walk: WalkInvariants<C>,
   span: ClusterSpan,
   pool: WindowPool,
@@ -221,7 +288,7 @@ function releaseAll(ledger: Set<Loaned>, swallow: boolean): void {
   if (first !== null && !swallow) throw first;
 }
 
-async function walkSpan<C>(
+async function walkSpan<C extends FrameClaim>(
   { sized, claims, knobs, head, signal }: WalkInvariants<C>,
   span: ClusterSpan,
   { pool, ledger }: Loans,
@@ -294,17 +361,4 @@ async function walkSpan<C>(
     pos = el.next;
   }
   return { frames, end: span.end, carried };
-}
-
-function merged<C>(walked: Map<number, ClaimedFrame<C>[]>): Map<C, ClaimedFrame<C>[]> {
-  const byClaim = new Map<C, ClaimedFrame<C>[]>();
-  const sorted = [...walked.entries()].sort(([a], [b]) => a - b);
-  for (const [, frames] of sorted) {
-    for (const frame of frames) {
-      const list = byClaim.get(frame.claim);
-      if (list === undefined) byClaim.set(frame.claim, [frame]);
-      else list.push(frame);
-    }
-  }
-  return byClaim;
 }

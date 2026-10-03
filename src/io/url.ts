@@ -32,8 +32,7 @@ export function withoutHeaders(
 /**
  * An HTTP source over `fetch`.
  *
- * A server answering a Range request with anything but 206 is not read;
- * the read throws, which the envelope reports as `source-failed`.
+ * A server that answers a Range request with anything but 206 fails the read as `source-failed`.
  */
 export async function urlSource(url: string, options: UrlOptions = {}): Promise<Source> {
   const transport = fetchTransport(url, options);

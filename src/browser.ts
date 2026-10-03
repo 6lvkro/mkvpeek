@@ -1,27 +1,29 @@
-export type { PeekOptions, PeekOutcome } from "./container/contract.js";
+export type { Container, PeekOptions, PeekOutcome } from "./container/contract.js";
 export type { Target } from "./container/target.js";
-export { peekSubtitles, peekTracks } from "./entry/browser.js";
+export { openContainer, peekTracks } from "./entry/browser.js";
+export type {
+  FetchKnobs,
+  Frame,
+  FrameFinder,
+  FrameOptions,
+  FramePreset,
+  FrameProgress,
+  FrameTuning,
+  FrameVia,
+} from "./frames/contract.js";
 export type { Source, Trip } from "./io/source.js";
 export type { UrlOptions } from "./io/url.js";
 export { urlSource } from "./io/url.js";
+export type { SubtitleFile } from "./subtitle/contract.js";
+export { subtitleFile, subtitleFiles } from "./subtitle/write.js";
+export type { Track, TrackType } from "./tracks.js";
 export type {
-  FetchKnobs,
-  SubtitleOptions,
-  SubtitlePreset,
-  SubtitleProgress,
-  SubtitleTuning,
-  SubtitleVia,
-} from "./subtitle/options.js";
-export type { Track, TrackType } from "./tracks/core.js";
-export type { ListedTrack } from "./tracks/list.js";
-export type { SubtitleTrack } from "./tracks/subtitle.js";
-export type {
+  Abortable,
   Attachment,
   ContainerInfo,
   PeekCode,
   RefusalCode,
-  SubtitleFinder,
   TrackFlags,
   TrackTag,
 } from "./vocabulary.js";
-export { isRefusalCode, worthFallback } from "./vocabulary.js";
+export { isRefusalCode, RefusalError, worthFallback } from "./vocabulary.js";
