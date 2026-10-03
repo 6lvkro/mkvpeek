@@ -24,6 +24,8 @@ export interface Track<T extends TrackType = TrackType> {
   number: number;
   uid: string | null;
   codecId: string;
+  /** null when the track states none, or states an encoding over them. */
+  codecPrivate: Uint8Array | null;
   /** Exactly what the container states, unnormalised; only no statement is null. */
   language: string | null;
   languageIetf: string | null;
@@ -34,7 +36,7 @@ export interface Track<T extends TrackType = TrackType> {
 }
 
 export const trackCore = <T extends TrackType>(
-  { typeCode, codecPrivate, encoded, ...stated }: TrackEntry,
+  { typeCode, encodings, ...stated }: TrackEntry,
   header: TracksHeader,
   type: T,
 ): Track<T> => ({

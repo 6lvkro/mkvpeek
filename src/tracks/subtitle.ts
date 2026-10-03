@@ -80,5 +80,6 @@ export function statedFrameCount(header: TracksHeader, track: TrackEntry): numbe
 
 function unsupportedReason(track: TrackEntry): SubtitleTrack["unsupported"] {
   if (!SUPPORTED_CODECS.has(track.codecId)) return "codec";
-  return track.encoded ? "content-encoded" : null;
+  const encoded = track.encodings === null || track.encodings.length > 0;
+  return encoded ? "content-encoded" : null;
 }

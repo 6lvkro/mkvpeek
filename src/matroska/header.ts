@@ -21,6 +21,7 @@ import {
   type Segment,
   type SegmentPass,
 } from "./chain.js";
+import { type ContentEncoding, codecPrivateOf, FRAMES_SCOPE } from "./encoding.js";
 
 export interface TrackEntry {
   index: number;
@@ -28,13 +29,14 @@ export interface TrackEntry {
   uid: string | null;
   typeCode: number;
   codecId: string;
-  codecPrivate: string;
+  codecPrivate: Uint8Array | null;
   language: string | null;
   languageIetf: string | null;
   name: string | null;
   flags: TrackFlags;
   codecDelayNs: number;
-  encoded: boolean;
+  /** null when the track states ContentEncodings that do not parse. */
+  encodings: ContentEncoding[] | null;
 }
 
 export interface CuePosition {
@@ -450,7 +452,7 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
       uid: null,
       typeCode: -1,
       codecId: "",
-      codecPrivate: "",
+      codecPrivate: null,
       language: null,
       languageIetf: null,
       name: null,
@@ -465,7 +467,7 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
         commentary: null,
       },
       codecDelayNs: 0,
-      encoded: false,
+      encodings: [],
     };
     for (const field of E.children(window, entry.body, entry.size)) {
       const { id } = field;
@@ -482,7 +484,7 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
       } else if (id === E.ID.track.CODEC_ID) {
         track.codecId = E.readAscii(window, field);
       } else if (id === E.ID.track.CODEC_PRIVATE) {
-        track.codecPrivate = E.readUtf8(window, field);
+        track.codecPrivate = E.readBytes(window, field.body, field.size).slice();
       } else if (id === E.ID.track.CODEC_DELAY) {
         const delay = E.readUint(window, field);
         if (delay === null) return "malformed";
@@ -510,15 +512,48 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
       } else if (id === E.ID.track.FLAG_COMMENTARY) {
         track.flags.commentary = flagOf(window, field) ?? track.flags.commentary;
       } else if (id === E.ID.track.CONTENT_ENCODINGS) {
-        track.encoded = true;
+        track.encodings = encodingsIn(window, field);
       }
     }
     if (track.number < 0) return "malformed";
     if (numbers.has(track.number)) return "malformed";
     numbers.add(track.number);
+    track.codecPrivate = codecPrivateOf(track.codecPrivate, track.encodings);
     entries.push(track);
   }
   return entries;
+}
+
+/** The ContentEncodings a TrackEntry states, or null when they do not parse. */
+function encodingsIn(window: Window, list: Element): ContentEncoding[] | null {
+  try {
+    const encodings: ContentEncoding[] = [];
+    for (const el of E.children(window, list.body, list.size)) {
+      if (el.id === E.ID.contentEncoding.ENCODING) {
+        encodings.push(encodingOf(window, el));
+      }
+    }
+    return encodings;
+  } catch (error) {
+    if (!E.isGrammarError(error)) throw error;
+    return null;
+  }
+}
+
+function encodingOf(window: Window, encoding: Element): ContentEncoding {
+  let scope = FRAMES_SCOPE;
+  for (const field of E.children(window, encoding.body, encoding.size)) {
+    if (field.id === E.ID.contentEncoding.SCOPE) {
+      scope = uintOf(window, field);
+    }
+  }
+  return { scope };
+}
+
+function uintOf(window: Window, field: Element): number {
+  const value = E.readUint(window, field);
+  if (value === null) throw new E.GrammarError();
+  return value;
 }
 
 function parseTimestampScale(window: Window, info: Element): number {

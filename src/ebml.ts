@@ -103,6 +103,16 @@ export const ID = {
     FLAG_COMMENTARY: 0x55af,
     CONTENT_ENCODINGS: 0x6d80,
   },
+  contentEncoding: {
+    ENCODING: 0x6240,
+    ORDER: 0x5031,
+    SCOPE: 0x5032,
+    TYPE: 0x5033,
+    COMPRESSION: 0x5034,
+    COMP_ALGO: 0x4254,
+    COMP_SETTINGS: 0x4255,
+    ENCRYPTION: 0x5035,
+  },
   attachment: {
     FILE: 0x61a7,
     FILE_NAME: 0x466e,

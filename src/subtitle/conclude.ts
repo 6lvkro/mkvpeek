@@ -1,3 +1,4 @@
+import * as E from "../ebml.js";
 import type { TimedHeader, TrackEntry } from "../matroska/header.js";
 import { kindOf, type TrackType } from "../tracks/core.js";
 import { isNumbered, isSupported, SUPPORTED_CODECS, subtitleEntries } from "../tracks/subtitle.js";
@@ -38,7 +39,10 @@ export function assembleTrack(
   const numbered = isNumbered(track);
   const ordered = orderedAndChecked(events, numbered, completeness);
   if (typeof ordered === "string") return ordered;
-  if (format === "ass") return { text: assembleAss(track.codecPrivate, ordered) };
+  if (format === "ass") {
+    const script = track.codecPrivate === null ? "" : E.decodeUtf8(track.codecPrivate);
+    return { text: assembleAss(script, ordered) };
+  }
   if (format === "vtt") return { text: assembleVtt(ordered) };
   void (format satisfies "srt" | undefined);
   return { text: assembleSrt(ordered) };
