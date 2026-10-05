@@ -283,15 +283,17 @@ export function readUid(window: Window, el: Element): string | null {
 }
 
 export function readAscii(window: Window, el: Element): string {
-  let out = "";
-  for (const byte of readBytes(window, el.body, el.size)) {
-    out += String.fromCharCode(byte);
+  const bytes = stringBytes(window, el);
+  const chunks: string[] = [];
+  for (let at = 0; at < bytes.length; at += ASCII_CHUNK_BYTES) {
+    const chunk = bytes.subarray(at, at + ASCII_CHUNK_BYTES);
+    chunks.push(String.fromCharCode(...chunk));
   }
-  return out.replace(/\0+$/, "");
+  return chunks.join("");
 }
 
 export function readUtf8(window: Window, el: Element): string {
-  return decodeUtf8(readBytes(window, el.body, el.size));
+  return decodeUtf8(stringBytes(window, el));
 }
 
 export function readBytes(window: Window, at: number, length: number): Uint8Array {
@@ -304,6 +306,9 @@ export function readBytes(window: Window, at: number, length: number): Uint8Arra
 
 const ALL_BITS = 0xff;
 
+/** Bytes per String.fromCharCode call, well under the engine's limit on arguments. */
+const ASCII_CHUNK_BYTES = 8192;
+
 const KEEPS_BOM = { ignoreBOM: true };
 
 const UTF8 = new TextDecoder("utf-8", KEEPS_BOM);
@@ -311,4 +316,15 @@ const UTF8 = new TextDecoder("utf-8", KEEPS_BOM);
 function offsetOf(window: Window, at: number, length: number): number {
   const start = at - window.at;
   return start < 0 || start + length > window.bytes.length ? -1 : start;
+}
+
+/**
+ * A String or UTF-8 value ends at its first NUL.
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc8794/#section-13}
+ */
+function stringBytes(window: Window, el: Element): Uint8Array {
+  const bytes = readBytes(window, el.body, el.size);
+  const end = bytes.indexOf(0);
+  return end === -1 ? bytes : bytes.subarray(0, end);
 }

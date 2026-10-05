@@ -178,8 +178,6 @@ const defaultInfo = (): ContainerInfo => ({
 const readsAs = (el: ReturnType<typeof E.readElement>, id: number): el is Element =>
   E.decoded(el) && el.id === id;
 
-const nulTrimmed = (padded: string): string => padded.replace(/\0+$/, "");
-
 /** Fetches and parses one optional top-level element, or folds to the absent answer. */
 const fetchedOptional = <T>(
   located: Located,
@@ -221,7 +219,7 @@ function simpleTag(window: Window, { size, body }: Element): TrackTag {
       value = E.readUtf8(window, part);
     }
   }
-  return { name: nulTrimmed(name), value: nulTrimmed(value) };
+  return { name, value };
 }
 
 async function optional<T>(fallback: T, read: () => Promise<T>): Promise<T> {
@@ -619,11 +617,11 @@ async function readAttachedFile(
     if (field.next - at > ELEMENT_PROBE_BYTES) return carried;
     const window = await readPastHead(located, at, field.next - at, carried);
     if (field.id === E.ID.attachment.FILE_NAME) {
-      out.fileName = nulTrimmed(E.readUtf8(window, field));
+      out.fileName = E.readUtf8(window, field);
     } else if (field.id === E.ID.attachment.FILE_MIME) {
       out.mimeType = E.readAscii(window, field);
     } else if (field.id === E.ID.attachment.FILE_DESCRIPTION) {
-      out.description = nulTrimmed(E.readUtf8(window, field));
+      out.description = E.readUtf8(window, field);
     } else if (field.id === E.ID.attachment.FILE_UID) {
       out.uid = E.readUid(window, field);
     }
@@ -639,11 +637,11 @@ function parseInfo(window: Window, info: Element): ContainerInfo {
   for (const field of E.children(window, info.body, info.size)) {
     const { id } = field;
     if (id === E.ID.info.TITLE) {
-      out.title = nulTrimmed(E.readUtf8(window, field));
+      out.title = E.readUtf8(window, field);
     } else if (id === E.ID.info.MUXING_APP) {
-      out.muxingApp = nulTrimmed(E.readUtf8(window, field));
+      out.muxingApp = E.readUtf8(window, field);
     } else if (id === E.ID.info.WRITING_APP) {
-      out.writingApp = nulTrimmed(E.readUtf8(window, field));
+      out.writingApp = E.readUtf8(window, field);
     } else if (id === E.ID.info.DURATION) {
       const ticks = E.readFloat(window, field);
       if (ticks !== null) {
@@ -675,7 +673,12 @@ function parseTrackTags(window: Window, tags: Element): Map<string | null, Track
       }
     }
     if (uid === null || tags.length === 0) continue;
-    bags.set(uid, [...(bags.get(uid) ?? []), ...tags]);
+    const bag = bags.get(uid);
+    if (bag === undefined) {
+      bags.set(uid, tags);
+    } else {
+      for (const each of tags) bag.push(each);
+    }
   }
   return bags;
 }
