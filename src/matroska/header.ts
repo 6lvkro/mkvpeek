@@ -101,6 +101,7 @@ export async function openSegment(
     return { ...entry, codecPrivate };
   };
   const trackEntries = await Promise.all(parsed.map(meant));
+  for (const uid of sharedUids(parsed)) trackTags.delete(uid);
   return { source, segment, head, offsets, trackEntries, trackTags };
 }
 
@@ -681,4 +682,14 @@ function parseTrackTags(window: Window, tags: Element): Map<string | null, Track
     }
   }
   return bags;
+}
+
+function sharedUids(entries: readonly TrackEntry[]): Set<string | null> {
+  const seen = new Set<string | null>();
+  const shared = new Set<string | null>();
+  for (const { uid } of entries) {
+    if (seen.has(uid)) shared.add(uid);
+    seen.add(uid);
+  }
+  return shared;
 }

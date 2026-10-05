@@ -32,6 +32,7 @@ export interface Track<T extends TrackType = TrackType> {
   name: string | null;
   flags: TrackFlags;
   codecDelayNs: number;
+  /** Empty when another track states the same TrackUID. */
   tags: TrackTag[];
 }
 

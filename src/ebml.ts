@@ -274,6 +274,7 @@ export function readUint(window: Window, el: Element): number | null {
 }
 
 export function readUid(window: Window, el: Element): string | null {
+  if (!uintFits(el.size)) return null;
   let hex = "";
   for (const byte of readBytes(window, el.body, el.size)) {
     hex += byte.toString(16).padStart(2, "0");
