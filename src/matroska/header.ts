@@ -111,7 +111,12 @@ export function readInfo(
 ): Promise<ContainerInfo> {
   const located = { ...opened, signal };
   const noInfo = defaultInfo();
-  return fetchedOptional(located, E.ID.segment.INFO, noInfo, parseInfo);
+  return optional(noInfo, async () => {
+    const id = E.ID.segment.INFO;
+    const el = (await fetchElement(located, id)) ?? (await hoppedTo(located, id));
+    if (el === null) return noInfo;
+    return parseInfo(el.window, el.element) ?? noInfo;
+  });
 }
 
 export function readFirstClusterTicks(
@@ -253,6 +258,17 @@ async function firstClusterTicksIn(located: Located): Promise<number | null> {
   return readClusterTime(window, cluster);
 }
 
+async function hoppedTo(
+  located: Located,
+  id: number,
+): Promise<{ window: Window; element: Element } | null> {
+  for await (const hop of hopTopLevel(located)) {
+    if (hop.el.id === E.ID.segment.CLUSTER) return null;
+    if (hop.el.id === id) return fetchAt(located, id, hop.at);
+  }
+  return null;
+}
+
 function locateTopLevel(head: Window, segment: Segment): Map<number, number> {
   const offsets = new Map<number, number>();
   let pos = segment.body;
@@ -287,9 +303,10 @@ function locateTopLevel(head: Window, segment: Segment): Map<number, number> {
             position = E.readUint(head, field);
           }
         }
-        if (id !== null && position !== null && !offsets.has(id)) {
-          offsets.set(id, segment.body + position);
-        }
+        if (id === null || position === null || offsets.has(id)) continue;
+        if (id === E.ID.segment.CLUSTER) continue;
+        const at = segment.body + position;
+        if (at < head.fileSize) offsets.set(id, at);
       }
     }
   } catch (error) {
@@ -392,6 +409,14 @@ async function fetchElement(
 ): Promise<{ window: Window; element: Element } | null> {
   const at = located.offsets.get(id);
   if (at === undefined) return null;
+  return fetchAt(located, id, at);
+}
+
+async function fetchAt(
+  located: Located,
+  id: number,
+  at: number,
+): Promise<{ window: Window; element: Element } | null> {
   const probe = await probed(located, at, located.head.fileSize, located.head);
   const header = E.readElement(probe, at);
   if (!readsAs(header, id)) return null;
