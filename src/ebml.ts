@@ -111,7 +111,6 @@ export const ID = {
     COMPRESSION: 0x5034,
     COMP_ALGO: 0x4254,
     COMP_SETTINGS: 0x4255,
-    ENCRYPTION: 0x5035,
   },
   attachment: {
     FILE: 0x61a7,

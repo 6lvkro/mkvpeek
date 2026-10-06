@@ -289,7 +289,6 @@ async function walkSpan(
   seed?: Loaned,
 ): Promise<WalkedCluster> {
   const widthFor = (at: number, need: number) => {
-    if (knobs.blockAheadBytes === 0) return need;
     const bound = Math.min(knobs.blockAheadBytes, span.end - at);
     return Math.max(need, bound);
   };

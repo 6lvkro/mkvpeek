@@ -13,8 +13,7 @@ export class HaltableQueue<T> {
   #parked: Array<() => void> = [];
   readonly #onHalt: () => void;
 
-  /** @param onHalt Told of every halt, whoever makes it. */
-  constructor(onHalt: () => void = () => {}) {
+  constructor(onHalt: () => void) {
     this.#onHalt = onHalt;
   }
 
@@ -71,7 +70,7 @@ export class HaltableQueue<T> {
 export async function inParallel<T, R>(
   items: readonly T[],
   concurrency: number,
-  each: (item: T, index: number) => Promise<R>,
+  each: (item: T) => Promise<R>,
   signal?: AbortSignal,
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
@@ -83,7 +82,7 @@ export async function inParallel<T, R>(
   };
   const halt = () => {};
   const store = async ([item, index]: [T, number]) => {
-    out[index] = await each(item, index);
+    out[index] = await each(item);
     return true;
   };
   await runWorkers(take, halt, Math.min(concurrency, items.length), store, signal);

@@ -1,7 +1,7 @@
 import type { Element, OpenElement, Window } from "../ebml.js";
 import * as E from "../ebml.js";
-import type { Source } from "../io/source.js";
-import { windowOver } from "../io/windows.js";
+import { available, type Source } from "../io/source.js";
+import { windowAt } from "../io/windows.js";
 
 export interface Segment {
   /**
@@ -48,13 +48,16 @@ export const pastSegment = (el: Element, segment: Segment): boolean => el.next >
 export const headerNeed = (at: number, end: number): number =>
   Math.min(ELEMENT_HEADER_BYTES, end - at);
 
-export function readPastHead(
+export async function readPastHead(
   pass: SegmentPass,
   at: number,
   length: number,
   held: Window,
 ): Promise<Window> {
-  return windowOver(pass.source, at, length, held, pass.signal);
+  const need = available(at, length, held.fileSize);
+  if (E.covers(held, at, need)) return held;
+  const sized = { source: pass.source, fileSize: held.fileSize };
+  return windowAt(sized, at, length, pass.signal);
 }
 
 export async function* hopTopLevel(

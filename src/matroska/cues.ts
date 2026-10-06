@@ -54,7 +54,7 @@ export async function readFrame(
   point: CuePosition,
   trackNumber: number,
   claim: FrameClaim,
-  memo: ClusterMemo = { last: null },
+  memo: ClusterMemo,
 ): Promise<BlockFrame | BlockClause> {
   const pointed = locateBlock(windows, point, memo);
   if (typeof pointed === "string") return pointed;

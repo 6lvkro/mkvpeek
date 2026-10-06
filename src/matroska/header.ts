@@ -138,12 +138,26 @@ export function readCues(
 }
 
 /** What each attached file states of itself, its bytes left where they are. */
-export function readAttachments(
+export async function readAttachments(
   opened: OpenedSegment,
   signal: AbortSignal | undefined,
 ): Promise<Attachment[]> {
   const located = { ...opened, signal };
-  return attachmentsIn(located);
+  const at = located.offsets.get(E.ID.segment.ATTACHMENTS);
+  if (at === undefined) return [];
+  const window = await probed(located, at, located.head.fileSize, located.head);
+  const attachmentsEl = E.readElement(window, at);
+  if (!readsAs(attachmentsEl, E.ID.segment.ATTACHMENTS)) return [];
+  const attachments: Attachment[] = [];
+  const visit: Visit = async (_at, fileEl, held) => {
+    if (fileEl.id !== E.ID.attachment.FILE) return held;
+    const file = await readAttachedFile(located, fileEl, held);
+    if (file === null) return null;
+    attachments.push(file.file);
+    return file.window;
+  };
+  const last = await eachChildIn(located, attachmentsEl, window, visit);
+  return last === null ? [] : attachments;
 }
 
 /** The pass that learned where the top-level elements are. */
@@ -601,24 +615,6 @@ async function eachChildIn(
     pos = field.next;
   }
   return window;
-}
-
-async function attachmentsIn(located: Located): Promise<Attachment[]> {
-  const at = located.offsets.get(E.ID.segment.ATTACHMENTS);
-  if (at === undefined) return [];
-  const window = await probed(located, at, located.head.fileSize, located.head);
-  const attachmentsEl = E.readElement(window, at);
-  if (!readsAs(attachmentsEl, E.ID.segment.ATTACHMENTS)) return [];
-  const attachments: Attachment[] = [];
-  const visit: Visit = async (_at, fileEl, held) => {
-    if (fileEl.id !== E.ID.attachment.FILE) return held;
-    const file = await readAttachedFile(located, fileEl, held);
-    if (file === null) return null;
-    attachments.push(file.file);
-    return file.window;
-  };
-  const last = await eachChildIn(located, attachmentsEl, window, visit);
-  return last === null ? [] : attachments;
 }
 
 async function readAttachedFile(

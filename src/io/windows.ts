@@ -14,7 +14,6 @@ import {
   MAX_SPAN_BYTES,
   type Range,
   type SizedSource,
-  type Source,
   stopIfAborted,
 } from "./source.js";
 
@@ -145,19 +144,6 @@ export function windowPool(slotBytes: number, slots: number): WindowPool {
     return slot === null ? null : lease(slot, width);
   };
   return { borrow };
-}
-
-export async function windowOver(
-  source: Source,
-  at: number,
-  length: number,
-  held: Window,
-  signal: AbortSignal | undefined,
-): Promise<Window> {
-  const need = available(at, length, held.fileSize);
-  if (E.covers(held, at, need)) return held;
-  const sized = { source, fileSize: held.fileSize };
-  return windowAt(sized, at, length, signal);
 }
 
 /** The one place a `Source` is read. */
