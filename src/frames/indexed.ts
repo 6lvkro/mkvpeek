@@ -16,9 +16,9 @@ import {
   type ClusterMemo,
   type CuedBlock,
   locateByCue,
+  planBlockRanges,
   planCuedShortfall,
   planProbes,
-  planRanges,
   planShortfall,
   readCuedFrame,
   readFrame,
@@ -54,7 +54,7 @@ export async function framesByIndex(
     const positions = slice.map((p) => p.cue);
     const edges = [...positions.slice(0, 1), ...positions.slice(-1)];
     const edgeClusters = new Set(edges.map((cue) => cue.clusterPos));
-    const blocks = planRanges(positions, knobs.cueAheadBytes);
+    const blocks = planBlockRanges(positions, knobs.cueAheadBytes);
     const probes = planProbes(edgeClusters);
     const wanted = [...blocks, ...probes];
     const toBuy = unheld(wanted, head);
@@ -153,7 +153,7 @@ function stonesOf(
   const cues = [...byTrack]
     .filter(([number]) => numbers.has(number))
     .flatMap(([, positions]) => positions);
-  const blocks = planRanges(cues, cueAheadBytes);
+  const blocks = planBlockRanges(cues, cueAheadBytes);
   return unheld(blocks, file.head);
 }
 

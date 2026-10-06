@@ -48,7 +48,7 @@ export function isHttpUrl(target: string): boolean {
   return parsed !== null && speaksHttp(parsed);
 }
 
-export function httpTarget(url: string): URL {
+export function admittedUrl(url: string): URL {
   const parsed = URL.parse(url);
   if (parsed === null) throw new Error(`${url} is not a URL`);
   const why = whyInadmissible(parsed);
@@ -57,8 +57,8 @@ export function httpTarget(url: string): URL {
 }
 
 export function whyInadmissible(parsed: URL): string | null {
-  const secret = whyCredentialed(parsed);
-  if (secret !== null) return secret;
+  const why = whyCredentialed(parsed);
+  if (why !== null) return why;
   if (!speaksHttp(parsed)) return `names ${parsed.protocol}, and this reader speaks http(s)`;
   return null;
 }
@@ -76,7 +76,7 @@ async function* chunksOf(
 
 function fetchTransport(url: string, options: UrlOptions): RangeTransport {
   const { headers = {}, fetch: fetchImpl = globalThis.fetch } = options;
-  httpTarget(url);
+  admittedUrl(url);
   const withRange = (from: number, to: number) => {
     const out = new Headers(withoutHeaders(headers, TRANSPORT_OWNED_HEADERS));
     const range = bytesRange(from, to);
@@ -91,8 +91,8 @@ function fetchTransport(url: string, options: UrlOptions): RangeTransport {
     const response = await fetchImpl(url, init);
     const reader = response.body?.getReader();
     const cancel = async () => {
-      const releasing = reader === undefined ? response.body?.cancel() : reader.cancel();
-      await releasing?.catch?.(() => {});
+      const cancelling = reader === undefined ? response.body?.cancel() : reader.cancel();
+      await cancelling?.catch?.(() => {});
     };
     return {
       status: response.status,

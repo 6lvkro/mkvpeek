@@ -34,7 +34,6 @@ export class HaltableQueue<T> {
 
   halt(): void {
     this.#halted = true;
-    this.#closed = true;
     this.#wake();
     this.#onHalt();
   }
@@ -97,8 +96,8 @@ export async function gathered<T extends readonly (() => Promise<unknown>)[]>(
   concurrency: number,
   signal?: AbortSignal,
 ): Promise<Gathered<T>> {
-  const ran = (task: () => Promise<unknown>) => task();
-  const out = await inParallel(tasks, concurrency, ran, signal);
+  const run = (task: () => Promise<unknown>) => task();
+  const out = await inParallel(tasks, concurrency, run, signal);
   return out as Gathered<T>;
 }
 

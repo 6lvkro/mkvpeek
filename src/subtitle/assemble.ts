@@ -1,7 +1,7 @@
 import type { Frame } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
-import { SUBSTATION_CODECS } from "./ass.js";
 import type { SubtitleFile } from "./contract.js";
+import { SUBSTATION_CODECS } from "./substation.js";
 
 /** A track's own frames as the file ffmpeg's -c:s copy writes, or null for a codec it does not write. */
 export function assemble(track: Track, frames: readonly Frame[]): SubtitleFile | null {
@@ -45,10 +45,10 @@ const MS_PER_SECOND = 1000;
 const CS_PER_SECOND = 100;
 const MS_PER_CS = MS_PER_SECOND / CS_PER_SECOND;
 
-const LAST_ASS_CS = 10 * 3600 * CS_PER_SECOND - 1;
+const LAST_SUBSTATION_CS = 10 * 3600 * CS_PER_SECOND - 1;
 
 /** The Format line's columns after its first. */
-const EVENT_COLUMNS = "Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
+const SUBSTATION_EVENT_COLUMNS = "Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
 
 const MARKED_PREFIX = "Marked=";
 
@@ -59,7 +59,7 @@ const LONG_MAX = 2n ** 63n - 1n;
 const LONG_MIN = -(2n ** 63n);
 
 const ASSEMBLERS: ReadonlyMap<string, Assembler> = new Map<string, Assembler>([
-  ...[...SUBSTATION_CODECS].map((codec) => [codec, assembleAss] as const),
+  ...[...SUBSTATION_CODECS].map((codec) => [codec, assembleSubstation] as const),
   ["S_TEXT/UTF8", assembleSrt],
   ["D_WEBVTT/SUBTITLES", assembleVtt],
   ["D_WEBVTT/CAPTIONS", assembleVtt],
@@ -69,13 +69,13 @@ const padded = (n: number, width = 2): string => String(n).padStart(width, "0");
 
 const cString = (text: string): string => text.split("\0", 1)[0] as string;
 
-const past = (text: string, at: number, what: string): number =>
-  text.startsWith(what, at) ? at + what.length : at;
+const past = (text: string, at: number, prefix: string): number =>
+  text.startsWith(prefix, at) ? at + prefix.length : at;
 
 const precedes = (a: QueuedDialogue, b: QueuedDialogue): boolean =>
   a.order < b.order || (a.order === b.order && a.arrival < b.arrival);
 
-function assembleAss(track: Track, frames: readonly Frame[]): SubtitleFile | null {
+function assembleSubstation(track: Track, frames: readonly Frame[]): SubtitleFile | null {
   if (track.codecPrivate === null) return null;
   const script = UTF8.decode(track.codecPrivate);
   const searched = cString(script);
@@ -86,7 +86,9 @@ function assembleAss(track: Track, frames: readonly Frame[]): SubtitleFile | nul
   const ssa = script !== "" && !searched.includes("\n[V4+ Styles]");
   const firstColumn = ssa ? "Marked" : "Layer";
   const added =
-    script !== "" && eventsAt < 0 ? `[Events]\nFormat: ${firstColumn}, ${EVENT_COLUMNS}\n` : "";
+    script !== "" && eventsAt < 0
+      ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n`
+      : "";
   const dialogues = frames.map((frame) => dialogueOf(frame, ssa));
   const written = inReadOrder(dialogues).map((line) => `Dialogue: ${line}\n`);
   const head = lines(script.slice(0, headEnd));
@@ -133,20 +135,20 @@ function dialogueOf(frame: Frame, ssa: boolean): Dialogue {
   const fieldAt = past(payload, order.end, ",");
   const layerAt = ssa ? past(payload, fieldAt, MARKED_PREFIX) : fieldAt;
   const layer = cStrtol(payload, layerAt);
-  const textAt = past(payload, layer.end, ",");
-  const rest = lineEndsTrimmed(payload.slice(textAt));
+  const restAt = past(payload, layer.end, ",");
+  const rest = lineEndsTrimmed(payload.slice(restAt));
   const [start, end] = timesOf(frame, MS_PER_CS);
   const lead = ssa ? MARKED_PREFIX : "";
-  const line = `${lead}${String(layer.value)},${assTime(start)},${assTime(end)},${rest}`;
+  const line = `${lead}${String(layer.value)},${substationTime(start)},${substationTime(end)},${rest}`;
   return { order: order.value, line };
 }
 
-function cStrtol(text: string, from: number): LeadingNumber {
-  const read = C_LONG.exec(text.slice(from));
-  if (read === null) return { value: 0n, end: from };
-  const stated = BigInt(read[1] as string);
+function cStrtol(text: string, at: number): LeadingNumber {
+  const match = C_LONG.exec(text.slice(at));
+  if (match === null) return { value: 0n, end: at };
+  const stated = BigInt(match[1] as string);
   const capped = stated > LONG_MAX ? LONG_MAX : stated;
-  return { value: capped < LONG_MIN ? LONG_MIN : capped, end: from + read[0].length };
+  return { value: capped < LONG_MIN ? LONG_MIN : capped, end: at + match[0].length };
 }
 
 /** Lines in ReadOrder, each queued until every ReadOrder before it is out. */
@@ -236,9 +238,9 @@ function clockFields(duration: number, perSecond: number): Elapsed {
   };
 }
 
-function assTime(cs: number): string {
-  const written = Math.min(cs, LAST_ASS_CS);
-  const { hours, minutes, seconds, fraction } = clockFields(written, CS_PER_SECOND);
+function substationTime(cs: number): string {
+  const capped = Math.min(cs, LAST_SUBSTATION_CS);
+  const { hours, minutes, seconds, fraction } = clockFields(capped, CS_PER_SECOND);
   return `${String(hours)}:${padded(minutes)}:${padded(seconds)}.${padded(fraction)}`;
 }
 

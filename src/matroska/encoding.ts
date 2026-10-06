@@ -52,15 +52,15 @@ export function undoFor(
 
 /** A stated compression that does not inflate counts as one this reader cannot undo. */
 export async function codecPrivateOf(
-  stated: Uint8Array | null,
+  stored: Uint8Array | null,
   encodings: readonly ContentEncoding[] | null,
   inflate: Inflate,
 ): Promise<Uint8Array | null> {
-  if (stated === null) return null;
+  if (stored === null) return null;
   const undo = undoFor(encodings, CODEC_PRIVATE_SCOPE, inflate);
-  if (undo === null) return stated;
+  if (undo === null) return stored;
   if (undo === false) return null;
-  return undo(stated).catch(() => null);
+  return undo(stored).catch(() => null);
 }
 
 const HEADER_STRIPPING_ALGO = 3;

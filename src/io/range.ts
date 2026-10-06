@@ -48,7 +48,7 @@ export function rangeSource(
   transport: OwnedTransport,
   { stallMs, signal: given }: RangeOptions,
 ): Source & AsyncDisposal {
-  const stall =
+  const effectiveStallMs =
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
       ? stallMs
       : null;
@@ -56,12 +56,12 @@ export function rangeSource(
   // A source whose own signal has already fired refuses at the open,
   // before it asks the server anything.
   stopIfAborted(signal);
-  const invariants: TransportInvariants = { url, transport, stallMs: stall, signal };
+  const invariants: TransportInvariants = { url, transport, stallMs: effectiveStallMs, signal };
   const { dispose } = transport;
-  let bought: HeadRead | null = null;
+  let headRead: HeadRead | null = null;
   const headFor = async (signal: AbortSignal | undefined): Promise<HeadRead> => {
-    bought ??= await readHead(invariants, signal);
-    return bought;
+    headRead ??= await readHead(invariants, signal);
+    return headRead;
   };
   const size = async (given?: AbortSignal) => (await headFor(givenSignal(given))).total;
   const read = async (at: number, length: number, into?: Uint8Array, given?: AbortSignal) => {
@@ -69,21 +69,21 @@ export function rangeSource(
     const { total, head } = await headFor(signal);
     const bounded = available(at, length, total);
     if (bounded === 0) return new Uint8Array(0);
-    const borrowed = lend(into, bounded);
+    const lent = lend(into, bounded);
     if (at + bounded <= head.length) {
-      if (borrowed === null) return new Uint8Array(head.subarray(at, at + bounded));
-      borrowed.set(head.subarray(at, at + bounded));
-      return borrowed;
+      if (lent === null) return new Uint8Array(head.subarray(at, at + bounded));
+      lent.set(head.subarray(at, at + bounded));
+      return lent;
     }
     if (at < head.length) {
       const fromHead = head.length - at;
-      const out = borrowed ?? new Uint8Array(bounded);
+      const out = lent ?? new Uint8Array(bounded);
       out.set(head.subarray(at, head.length));
       const room = out.subarray(fromHead);
       const tail = await readOverRanges(invariants, head.length, bounded - fromHead, room, signal);
       return out.subarray(0, fromHead + tail.length);
     }
-    return readOverRanges(invariants, at, bounded, borrowed, signal);
+    return readOverRanges(invariants, at, bounded, lent, signal);
   };
 
   const release = () => Promise.resolve(dispose?.());
@@ -193,8 +193,8 @@ async function readOverRanges(
         );
       }
       const from = at + written;
-      const response = await requestRange(invariants, dog, from, at + bounded - 1);
-      const landed = await readBodyInto(response, out, written);
+      const reply = await requestRange(invariants, dog, from, at + bounded - 1);
+      const landed = await readBodyInto(reply, out, written);
       if (landed === 0) {
         throw new Error(
           `${invariants.url} answered a range from ${String(from)} with no bytes in it`,
@@ -246,10 +246,10 @@ async function* watched(
         raisedHere = true;
         throw new Error(`${url} sent ${String(idle)} empty chunks in a row and no bytes`);
       }
-      const stop = abortReason(dog.signal);
-      if (stop !== null) {
+      const reason = abortReason(dog.signal);
+      if (reason !== null) {
         raisedHere = true;
-        throw stop;
+        throw reason;
       }
     }
   } catch (error) {
@@ -265,9 +265,9 @@ function watchdog(
   stallMs: number | null,
   callers: ReadonlyArray<AbortSignal | undefined>,
 ): Watchdog {
-  const held = callers.filter((caller) => caller !== undefined);
-  if (stallMs === null && held.length < 2)
-    return { signal: held[0], alive: () => {}, off: () => {} };
+  const given = callers.filter((caller) => caller !== undefined);
+  if (stallMs === null && given.length < 2)
+    return { signal: given[0], alive: () => {}, off: () => {} };
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const alive = () => {
@@ -280,7 +280,7 @@ function watchdog(
     timer = setTimeout(stall, stallMs);
   };
   alive();
-  const unlink = forwardAbort(held, controller);
+  const unlink = forwardAbort(given, controller);
   const off = () => {
     clearTimeout(timer);
     unlink();

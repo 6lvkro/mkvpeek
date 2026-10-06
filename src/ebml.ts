@@ -223,7 +223,7 @@ export function vintAllOnes(bytes: Uint8Array, start: number, length: number): b
   return true;
 }
 
-export function uintAt(bytes: Uint8Array, start: number, size: number): number {
+export function uintValue(bytes: Uint8Array, start: number, size: number): number {
   let value = 0;
   for (let i = 0; i < size; i++) {
     value = value * 256 + (bytes[start + i] as number);
@@ -251,8 +251,7 @@ export function* children(window: Window, body: number, size: number): Generator
   const end = body + size;
   while (at < end) {
     const el = readElement(window, at);
-    const invalidGrammar = typeof el === "string" || "open" in el || el.next > end;
-    if (invalidGrammar) throw new GrammarError();
+    if (!fits(el, end)) throw new GrammarError();
     yield el;
     at = el.next;
   }
@@ -270,7 +269,7 @@ export function readUint(window: Window, el: Element): number | null {
   if (!uintFits(el.size)) return null;
   const start = offsetOf(window, el.body, el.size);
   if (start < 0) throw new GrammarError();
-  return uintAt(window.bytes, start, el.size);
+  return uintValue(window.bytes, start, el.size);
 }
 
 export function readUid(window: Window, el: Element): string | null {

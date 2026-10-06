@@ -6,9 +6,9 @@ import { type RefusalCode, RefusalError } from "./vocabulary.js";
 export function refusalOf(
   error: unknown,
   signal: AbortSignal | undefined,
-  grammar: Extract<RefusalCode, "malformed" | "unreadable"> = "malformed",
+  grammarCode: Extract<RefusalCode, "malformed" | "unreadable"> = "malformed",
 ): RefusalCode {
   if (abortReason(signal) !== null) return "cancelled";
   if (error instanceof RefusalError) return error.code;
-  return E.isGrammarError(error) ? grammar : "source-failed";
+  return E.isGrammarError(error) ? grammarCode : "source-failed";
 }

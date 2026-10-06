@@ -32,7 +32,7 @@ const DIGIT_NINE = 0x39;
 
 const COMMA = 0x2c;
 
-/** The ReadOrder an ASS frame leads with: ASCII digits, then a comma. */
+/** The ReadOrder a SubStation frame leads with: ASCII digits, then a comma. */
 function readOrderOf(payload: Uint8Array): number | null {
   const end = payload.findIndex((byte) => byte < DIGIT_ZERO || byte > DIGIT_NINE);
   if (end < 1 || payload[end] !== COMMA) return null;

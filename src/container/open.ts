@@ -31,7 +31,7 @@ import {
 } from "../vocabulary.js";
 import type { Container } from "./contract.js";
 import { type Platform, segmentOf } from "./listing.js";
-import { type Lease, leaseOf, type Target } from "./target.js";
+import { leaseOf, type Target, type TargetLease } from "./target.js";
 
 export async function openWith(
   platform: Platform,
@@ -59,7 +59,7 @@ interface SharedRead<T> {
 class LeasedContainer implements Container {
   readonly tracks: Track[];
   readonly info: ContainerInfo;
-  readonly #lease: Lease;
+  readonly #lease: TargetLease;
   readonly #file: FrameFile;
   readonly #attachments: PartRead<Attachment[]>;
   readonly #closing = new AbortController();
@@ -67,7 +67,7 @@ class LeasedContainer implements Container {
   #closed: Promise<void> | null = null;
   declare readonly [Symbol.asyncDispose]: () => Promise<void>;
 
-  constructor(lease: Lease, opened: OpenedSegment, info: ContainerInfo, inflate: Inflate) {
+  constructor(lease: TargetLease, opened: OpenedSegment, info: ContainerInfo, inflate: Inflate) {
     const source = withPendingReads(lease.source, this.#pending);
     const held = { ...opened, source };
     this.tracks = allTracks(opened);
@@ -119,7 +119,7 @@ class LeasedContainer implements Container {
 }
 
 async function leased(
-  lease: Lease,
+  lease: TargetLease,
   inflate: Inflate,
   signal: AbortSignal | undefined,
 ): Promise<Container> {

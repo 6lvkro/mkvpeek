@@ -5,10 +5,10 @@ import { available, LARGE_READ_BYTES, lend, type Source } from "../io/source.js"
 export async function fileSource(path: string): Promise<Source> {
   const handle = await open(path, "r");
   const local = await isLocalDisk(path);
-  let cached: number | null = null;
+  let fileSize: number | null = null;
   const size = async (): Promise<number> => {
-    cached ??= (await handle.stat()).size;
-    return cached;
+    fileSize ??= (await handle.stat()).size;
+    return fileSize;
   };
   const read = async (at: number, length: number, into?: Uint8Array) => {
     const bounded = available(at, length, await size());

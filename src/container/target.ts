@@ -1,6 +1,6 @@
+import { urlSource, whyCredentialed, whyInadmissible } from "../io/http.js";
 import { memorySource } from "../io/memory.js";
 import type { Source } from "../io/source.js";
-import { urlSource, whyCredentialed, whyInadmissible } from "../io/url.js";
 import { type RefusalCode, RefusalError } from "../vocabulary.js";
 
 /** A path (Node) or URL string, bytes in hand, or a {@linkcode Source} opened by the caller. */
@@ -9,7 +9,7 @@ export type Target = Source | ArrayBufferView | ArrayBuffer | string;
 export type Opener = (target: string) => Promise<Source | RefusalCode>;
 
 /** A source a target became, and how to let it go where something was opened for it. */
-export interface Lease {
+export interface TargetLease {
   source: Source;
   release?(): Promise<void>;
 }
@@ -25,17 +25,17 @@ export const viaUrl: Opener = async (target) => {
 };
 
 /** The source a target names, opened if a string named it; a target that will not open throws its refusal. */
-export async function leaseOf(target: Target, open: Opener): Promise<Lease> {
+export async function leaseOf(target: Target, open: Opener): Promise<TargetLease> {
   if (typeof target !== "string") return { source: heldSource(target) };
   const parsed = URL.parse(target);
   const secret = parsed === null ? null : whyCredentialed(parsed);
   if (secret !== null) throw new RefusalError("invalid-target");
-  const opened = await open(target);
-  if (typeof opened === "string") throw new RefusalError(opened);
+  const source = await open(target);
+  if (typeof source === "string") throw new RefusalError(source);
   const release = async () => {
-    await opened.close?.().catch(() => {});
+    await source.close?.().catch(() => {});
   };
-  return { source: opened, release };
+  return { source: source, release };
 }
 
 function heldSource(target: Exclude<Target, string>): Source {

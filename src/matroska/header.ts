@@ -14,7 +14,7 @@ import {
   headerNeed,
   hopTopLevel,
   pastSegment,
-  readClusterTime,
+  readClusterTicks,
   readPastHead,
   type Segment,
   type SegmentPass,
@@ -192,9 +192,9 @@ const fetchedOptional = <T>(
   parse: (window: Window, element: Element) => T | null,
 ): Promise<T> =>
   optional(fallback, async () => {
-    const el = await fetchElement(located, id);
-    if (el === null) return fallback;
-    return parse(el.window, el.element) ?? fallback;
+    const fetched = await fetchElement(located, id);
+    if (fetched === null) return fallback;
+    return parse(fetched.window, fetched.element) ?? fallback;
   });
 
 /**
@@ -255,7 +255,7 @@ async function firstClusterTicksIn(located: Located): Promise<number | null> {
   const cluster = E.readElement(window, at);
   if (typeof cluster === "string" || cluster.id !== E.ID.segment.CLUSTER) return null;
 
-  return readClusterTime(window, cluster);
+  return readClusterTicks(window, cluster);
 }
 
 async function hoppedTo(
@@ -326,7 +326,7 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
     return start;
   };
   const cursor = { id: 0, body: 0, next: 0 };
-  const readElementHead = (at: number, end: number) => {
+  const readElementHeader = (at: number, end: number) => {
     const idStart = startOf(at, 1);
     const idLength = E.vintLength(bytes[idStart] as number);
     if (idLength > E.MAX_VINT_BYTES) throw new E.GrammarError();
@@ -345,12 +345,12 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
   const cursorUint = () => {
     const size = cursor.next - cursor.body;
     const start = startOf(cursor.body, size);
-    return E.uintFits(size) ? E.uintAt(bytes, start, size) : null;
+    return E.uintFits(size) ? E.uintValue(bytes, start, size) : null;
   };
   const pointTicks = (body: number, next: number) => {
     let fieldAt = body;
     while (fieldAt < next) {
-      readElementHead(fieldAt, next);
+      readElementHeader(fieldAt, next);
       if (cursor.id === E.ID.cue.TIME) return cursorUint();
       fieldAt = cursor.next;
     }
@@ -359,7 +359,7 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
   const end = cues.body + cues.size;
   let at = cues.body;
   while (at < end) {
-    readElementHead(at, end);
+    readElementHeader(at, end);
     const pointId = cursor.id;
     const pointBody = cursor.body;
     const pointNext = cursor.next;
@@ -367,21 +367,21 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
       const ticks = pointTicks(pointBody, pointNext);
       let fieldAt = pointBody;
       while (fieldAt < pointNext) {
-        readElementHead(fieldAt, pointNext);
+        readElementHeader(fieldAt, pointNext);
         const fieldId = cursor.id;
         const fieldBody = cursor.body;
         const fieldNext = cursor.next;
         if (fieldId === E.ID.cue.TRACK_POSITIONS) {
-          let track: number | null = null;
+          let trackNumber: number | null = null;
           let clusterPos: number | null = null;
           let relPos: number | null = 0;
           let itemAt = fieldBody;
           while (itemAt < fieldNext) {
-            readElementHead(itemAt, fieldNext);
+            readElementHeader(itemAt, fieldNext);
             const itemId = cursor.id;
             const value = cursorUint();
             if (itemId === E.ID.cue.TRACK) {
-              track = value;
+              trackNumber = value;
             } else if (itemId === E.ID.cue.CLUSTER_POSITION) {
               clusterPos = value;
             } else if (itemId === E.ID.cue.RELATIVE_POSITION) {
@@ -389,11 +389,11 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
             }
             itemAt = cursor.next;
           }
-          if (track === null || clusterPos === null || relPos === null) return null;
-          const entry: CuePosition = { clusterPos: segment.body + clusterPos, relPos, ticks };
-          const list = byTrack.get(track);
-          if (list === undefined) byTrack.set(track, [entry]);
-          else list.push(entry);
+          if (trackNumber === null || clusterPos === null || relPos === null) return null;
+          const position: CuePosition = { clusterPos: segment.body + clusterPos, relPos, ticks };
+          const list = byTrack.get(trackNumber);
+          if (list === undefined) byTrack.set(trackNumber, [position]);
+          else list.push(position);
         }
         fieldAt = fieldNext;
       }
@@ -430,9 +430,9 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
   const entries: TrackEntry[] = [];
   const numbers = new Set<number>();
   let index = 0;
-  for (const entry of E.children(window, tracks.body, tracks.size)) {
-    if (entry.id !== E.ID.track.ENTRY) continue;
-    const track: TrackEntry = {
+  for (const entryEl of E.children(window, tracks.body, tracks.size)) {
+    if (entryEl.id !== E.ID.track.ENTRY) continue;
+    const entry: TrackEntry = {
       index: index++,
       number: -1,
       uid: null,
@@ -455,56 +455,56 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
       codecDelayNs: 0,
       encodings: [],
     };
-    for (const field of E.children(window, entry.body, entry.size)) {
+    for (const field of E.children(window, entryEl.body, entryEl.size)) {
       const { id } = field;
       if (id === E.ID.track.NUMBER) {
         const number = E.readUint(window, field);
         if (number === null) return "malformed";
-        track.number = number;
+        entry.number = number;
       } else if (id === E.ID.track.UID) {
-        track.uid = E.readUid(window, field);
+        entry.uid = E.readUid(window, field);
       } else if (id === E.ID.track.TYPE) {
         const typeCode = E.readUint(window, field);
         if (typeCode === null) return "malformed";
-        track.typeCode = typeCode;
+        entry.typeCode = typeCode;
       } else if (id === E.ID.track.CODEC_ID) {
-        track.codecId = E.readAscii(window, field);
+        entry.codecId = E.readAscii(window, field);
       } else if (id === E.ID.track.CODEC_PRIVATE) {
-        track.codecPrivate = E.readBytes(window, field.body, field.size).slice();
+        entry.codecPrivate = E.readBytes(window, field.body, field.size).slice();
       } else if (id === E.ID.track.CODEC_DELAY) {
         const delay = E.readUint(window, field);
         if (delay === null) return "malformed";
-        track.codecDelayNs = delay;
+        entry.codecDelayNs = delay;
       } else if (id === E.ID.track.LANGUAGE) {
-        track.language = E.readAscii(window, field);
+        entry.language = E.readAscii(window, field);
       } else if (id === E.ID.track.LANGUAGE_IETF) {
-        track.languageIetf = E.readAscii(window, field);
+        entry.languageIetf = E.readAscii(window, field);
       } else if (id === E.ID.track.NAME) {
-        track.name = E.readUtf8(window, field);
+        entry.name = E.readUtf8(window, field);
       } else if (id === E.ID.track.FLAG_FORCED) {
-        track.flags.forced = flagOf(window, field) ?? track.flags.forced;
+        entry.flags.forced = flagOf(window, field) ?? entry.flags.forced;
       } else if (id === E.ID.track.FLAG_DEFAULT) {
-        track.flags.default = flagOf(window, field) ?? track.flags.default;
+        entry.flags.default = flagOf(window, field) ?? entry.flags.default;
       } else if (id === E.ID.track.FLAG_ENABLED) {
-        track.flags.enabled = flagOf(window, field) ?? track.flags.enabled;
+        entry.flags.enabled = flagOf(window, field) ?? entry.flags.enabled;
       } else if (id === E.ID.track.FLAG_HEARING_IMPAIRED) {
-        track.flags.hearingImpaired = flagOf(window, field) ?? track.flags.hearingImpaired;
+        entry.flags.hearingImpaired = flagOf(window, field) ?? entry.flags.hearingImpaired;
       } else if (id === E.ID.track.FLAG_VISUAL_IMPAIRED) {
-        track.flags.visualImpaired = flagOf(window, field) ?? track.flags.visualImpaired;
+        entry.flags.visualImpaired = flagOf(window, field) ?? entry.flags.visualImpaired;
       } else if (id === E.ID.track.FLAG_TEXT_DESCRIPTIONS) {
-        track.flags.textDescriptions = flagOf(window, field) ?? track.flags.textDescriptions;
+        entry.flags.textDescriptions = flagOf(window, field) ?? entry.flags.textDescriptions;
       } else if (id === E.ID.track.FLAG_ORIGINAL) {
-        track.flags.original = flagOf(window, field) ?? track.flags.original;
+        entry.flags.original = flagOf(window, field) ?? entry.flags.original;
       } else if (id === E.ID.track.FLAG_COMMENTARY) {
-        track.flags.commentary = flagOf(window, field) ?? track.flags.commentary;
+        entry.flags.commentary = flagOf(window, field) ?? entry.flags.commentary;
       } else if (id === E.ID.track.CONTENT_ENCODINGS) {
-        track.encodings = encodingsIn(window, field);
+        entry.encodings = encodingsIn(window, field);
       }
     }
-    if (track.number < 0) return "malformed";
-    if (numbers.has(track.number)) return "malformed";
-    numbers.add(track.number);
-    entries.push(track);
+    if (entry.number < 0) return "malformed";
+    if (numbers.has(entry.number)) return "malformed";
+    numbers.add(entry.number);
+    entries.push(entry);
   }
   return entries;
 }
@@ -525,12 +525,12 @@ function encodingsIn(window: Window, list: Element): ContentEncoding[] | null {
   }
 }
 
-function encodingOf(window: Window, encoding: Element): ContentEncoding {
+function encodingOf(window: Window, encodingEl: Element): ContentEncoding {
   let order = 0;
   let scope = FRAMES_SCOPE;
   let type = COMPRESSION_TYPE;
   let compression: ContentCompression = { algo: ZLIB_ALGO, settings: null };
-  for (const field of E.children(window, encoding.body, encoding.size)) {
+  for (const field of E.children(window, encodingEl.body, encodingEl.size)) {
     const { id } = field;
     if (id === E.ID.contentEncoding.ORDER) {
       order = uintOf(window, field);
@@ -595,9 +595,9 @@ async function eachChildIn(
     const field = E.readElement(window, pos);
     if (!E.decoded(field)) return window;
     if (!E.fits(field, parent.next)) return null;
-    const next = await visit(pos, field, window);
-    if (next === null) return null;
-    window = next;
+    const nextWindow = await visit(pos, field, window);
+    if (nextWindow === null) return null;
+    window = nextWindow;
     pos = field.next;
   }
   return window;
@@ -634,14 +634,14 @@ async function readAttachedFile(
     size: 0,
     uid: null,
   };
-  const visit: Visit = async (at, field, carried) => {
+  const visit: Visit = async (at, field, held) => {
     if (field.id === E.ID.attachment.FILE_DATA) {
       out.at = field.body;
       out.size = field.size;
-      return carried;
+      return held;
     }
-    if (field.next - at > ELEMENT_PROBE_BYTES) return carried;
-    const window = await readPastHead(located, at, field.next - at, carried);
+    if (field.next - at > ELEMENT_PROBE_BYTES) return held;
+    const window = await readPastHead(located, at, field.next - at, held);
     if (field.id === E.ID.attachment.FILE_NAME) {
       out.fileName = E.readUtf8(window, field);
     } else if (field.id === E.ID.attachment.FILE_MIME) {
@@ -682,11 +682,11 @@ function parseInfo(window: Window, info: Element): ContainerInfo {
 }
 
 function parseTrackTags(window: Window, tags: Element): Map<string | null, TrackTag[]> {
-  const bags = new Map<string | null, TrackTag[]>();
+  const byUid = new Map<string | null, TrackTag[]>();
   for (const tag of E.children(window, tags.body, tags.size)) {
     if (tag.id !== E.ID.tag.ENTRY) continue;
     let uid: string | null = null;
-    const tags: TrackTag[] = [];
+    const simpleTags: TrackTag[] = [];
     for (const field of E.children(window, tag.body, tag.size)) {
       if (field.id === E.ID.tag.TARGETS) {
         for (const target of E.children(window, field.body, field.size)) {
@@ -695,18 +695,18 @@ function parseTrackTags(window: Window, tags: Element): Map<string | null, Track
           }
         }
       } else if (field.id === E.ID.tag.SIMPLE) {
-        tags.push(simpleTag(window, field));
+        simpleTags.push(simpleTag(window, field));
       }
     }
-    if (uid === null || tags.length === 0) continue;
-    const bag = bags.get(uid);
+    if (uid === null || simpleTags.length === 0) continue;
+    const bag = byUid.get(uid);
     if (bag === undefined) {
-      bags.set(uid, tags);
+      byUid.set(uid, simpleTags);
     } else {
-      for (const each of tags) bag.push(each);
+      for (const each of simpleTags) bag.push(each);
     }
   }
-  return bags;
+  return byUid;
 }
 
 function sharedUids(entries: readonly TrackEntry[]): Set<string | null> {

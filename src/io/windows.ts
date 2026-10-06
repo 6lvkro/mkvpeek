@@ -132,7 +132,7 @@ export function windowPool(slotBytes: number, slots: number): WindowPool {
       released = true;
       free.push(slot);
     };
-    return { bytes: slot.subarray(0, width), release: release };
+    return { bytes: slot.subarray(0, width), release };
   };
   const borrow = (width: number) => {
     if (width < LARGE_READ_BYTES || width > slotBytes) return null;
@@ -156,8 +156,8 @@ export async function windowOver(
 ): Promise<Window> {
   const need = available(at, length, held.fileSize);
   if (E.covers(held, at, need)) return held;
-  const heldSource = { source, fileSize: held.fileSize };
-  return windowAt(heldSource, at, length, signal);
+  const sized = { source, fileSize: held.fileSize };
+  return windowAt(sized, at, length, signal);
 }
 
 /** The one place a `Source` is read. */

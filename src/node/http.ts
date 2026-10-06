@@ -4,6 +4,14 @@ import http from "node:http";
 import https from "node:https";
 import type { AsyncDisposal } from "../disposal.js";
 import {
+  admittedUrl,
+  TRANSPORT_OWNED_HEADERS,
+  type UrlOptions,
+  urlSource as viaFetch,
+  whyInadmissible,
+  withoutHeaders,
+} from "../io/http.js";
+import {
   bytesRange,
   type OwnedTransport,
   type RangeReply,
@@ -12,14 +20,6 @@ import {
 } from "../io/range.js";
 import type { Source } from "../io/source.js";
 import { abortReason, onAbort } from "../io/source.js";
-import {
-  httpTarget,
-  TRANSPORT_OWNED_HEADERS,
-  type UrlOptions,
-  urlSource as viaFetch,
-  whyInadmissible,
-  withoutHeaders,
-} from "../io/url.js";
 
 /**
  * An HTTP source over `node:http`, or over `fetch` when one is passed.
@@ -39,12 +39,12 @@ const MAX_SOCKETS = 64;
 
 const MAX_REDIRECTS = 20;
 
-const CROSS_ORIGIN_STRIPPED = new Set(["authorization", "cookie", "proxy-authorization"]);
+const CROSS_ORIGIN_STRIPPED_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
 
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
 function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
-  const startUrl = httpTarget(url);
+  const startUrl = admittedUrl(url);
   const agent = {
     "http:": new http.Agent({ keepAlive: true, maxSockets: MAX_SOCKETS }),
     "https:": new https.Agent({ keepAlive: true, maxSockets: MAX_SOCKETS }),
@@ -106,7 +106,7 @@ function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
       const why = whyInadmissible(next);
       if (why !== null) throw new Error(`${url} redirected to one that ${why}`);
       if (next.origin !== current.origin) {
-        carrying = withoutHeaders(carrying, CROSS_ORIGIN_STRIPPED);
+        carrying = withoutHeaders(carrying, CROSS_ORIGIN_STRIPPED_HEADERS);
       }
       current = next;
     }
@@ -118,8 +118,7 @@ function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
       } catch {}
     }
   };
-  const owned = { dispose };
-  return Object.assign(transport, owned);
+  return Object.assign(transport, { dispose });
 }
 
 function replyOver(response: http.IncomingMessage): RangeReply {

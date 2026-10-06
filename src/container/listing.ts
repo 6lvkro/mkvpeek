@@ -17,8 +17,8 @@ export async function peekWith(
   target: Target,
   options: PeekOptions = {},
 ): Promise<PeekOutcome> {
-  const { signal: asked, info, attachments } = { ...options };
-  const signal = givenSignal(asked);
+  const { signal: given, info, attachments } = { ...options };
+  const signal = givenSignal(given);
   const wants = { info: info === true, attachments: attachments === true };
   try {
     const lease = await leaseOf(target, platform.open);

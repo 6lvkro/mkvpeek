@@ -8,8 +8,8 @@ import type { Container, PeekOptions, PeekOutcome } from "../container/contract.
 import { type Platform, peekWith } from "../container/listing.js";
 import { openWith } from "../container/open.js";
 import { type Target, urlRefusal } from "../container/target.js";
+import { isHttpUrl, namesAuthority } from "../io/http.js";
 import type { Source } from "../io/source.js";
-import { isHttpUrl, namesAuthority } from "../io/url.js";
 import type { Abortable, RefusalCode } from "../vocabulary.js";
 import { fileSource } from "./file.js";
 import { urlSource } from "./http.js";

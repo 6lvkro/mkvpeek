@@ -137,8 +137,8 @@ export function abortReason(signal: AbortSignal | undefined): Error | null {
 }
 
 export function stopIfAborted(signal: AbortSignal | undefined): void {
-  const stopped = abortReason(signal);
-  if (stopped !== null) throw stopped;
+  const reason = abortReason(signal);
+  if (reason !== null) throw reason;
 }
 
 /** A Watch whose report cannot end the read by throwing, and is not made once the signal fires. */

@@ -11,7 +11,7 @@ import {
 } from "../io/source.js";
 import { type WindowPool, windowAt, windowPool } from "../io/windows.js";
 import {
-  BLOCK_HEAD_BYTES,
+  BLOCK_PROBE_BYTES,
   BLOCK_REFUSAL,
   type BlockClause,
   type ClaimedFrame,
@@ -23,7 +23,7 @@ import {
   CLUSTER_PROBE_BYTES,
   FRAME_IDS,
   hopTopLevel,
-  readClusterTime,
+  readClusterTicks,
   type SegmentPass,
 } from "./chain.js";
 
@@ -52,7 +52,7 @@ export async function* walkFrames<C extends FrameClaim>(
   const laneCount = knobs.concurrency - 1;
   const ahead = Math.max(1, laneCount) * CLUSTERS_AHEAD_PER_LANE;
   const walked = new Map<number, ClaimedFrame<C>[]>();
-  let done = 0;
+  let doneBytes = 0;
   let foundCount = 0;
   let handedCount = 0;
   let refused = false;
@@ -86,8 +86,8 @@ export async function* walkFrames<C extends FrameClaim>(
       return false;
     }
     walked.set(index, outcome.frames);
-    done += outcome.end - span.at;
-    watch.onProgress(done, fileSize);
+    doneBytes += outcome.end - span.at;
+    watch.onProgress(doneBytes, fileSize);
     return true;
   };
 
@@ -241,14 +241,14 @@ const CLUSTER_CHILD_IDS = new Set<number>([
   ...Object.values(E.ID.global),
 ]);
 
-const CLUSTER_END_IDS = new Set<number>(Object.values(E.ID.segment));
+const SEGMENT_CHILD_IDS = new Set<number>(Object.values(E.ID.segment));
 
 /**
  * Every child of the Segment plus the two globals.
  *
  * The hop dies on any id outside this set.
  */
-const TOP_LEVEL_IDS = new Set<number>([...CLUSTER_END_IDS, ...Object.values(E.ID.global)]);
+const TOP_LEVEL_IDS = new Set<number>([...SEGMENT_CHILD_IDS, ...Object.values(E.ID.global)]);
 
 /** How many clusters per lane the walk may find ahead of the one it hands over next. */
 const CLUSTERS_AHEAD_PER_LANE = 4;
@@ -265,8 +265,7 @@ async function walkCluster<C extends FrameClaim>(
   const ledger = new Set<Loaned>();
   let outcome: WalkedCluster<C>;
   try {
-    const loans = { pool, ledger };
-    outcome = await walkSpan(walk, span, loans, seed);
+    outcome = await walkSpan(walk, span, { pool, ledger }, seed);
   } catch (error) {
     releaseAll(ledger, true);
     throw error;
@@ -299,7 +298,7 @@ async function walkSpan<C extends FrameClaim>(
     const bound = Math.min(knobs.blockAheadBytes, span.end - at);
     return Math.max(need, bound);
   };
-  const first = widthFor(span.at, CLUSTER_PROBE_BYTES);
+  const firstWidth = widthFor(span.at, CLUSTER_PROBE_BYTES);
   const fetchWindow = async (at: number, width: number) => {
     const bounded = available(at, width, sized.fileSize);
     if (E.covers(head, at, bounded)) return head;
@@ -316,15 +315,15 @@ async function walkSpan<C extends FrameClaim>(
       lease.release();
       return window;
     }
-    const owned = { ...window, release: lease.release };
-    ledger.add(owned);
-    return owned;
+    const loaned = { ...window, release: lease.release };
+    ledger.add(loaned);
+    return loaned;
   };
-  const seeded = available(span.at, first, sized.fileSize);
-  const adopted = seed !== undefined && E.covers(seed, span.at, seeded) ? seed : null;
-  let carried: Window = adopted ?? (await fetchWindow(span.at, first));
-  const clusterTime = readClusterTime(carried, span.el);
-  if (clusterTime === null) return BLOCK_REFUSAL.noClusterTime;
+  const firstBounded = available(span.at, firstWidth, sized.fileSize);
+  const adopted = seed !== undefined && E.covers(seed, span.at, firstBounded) ? seed : null;
+  let carried: Window = adopted ?? (await fetchWindow(span.at, firstWidth));
+  const clusterTicks = readClusterTicks(carried, span.el);
+  if (clusterTicks === null) return BLOCK_REFUSAL.noClusterTime;
 
   const frames: ClaimedFrame<C>[] = [];
   let pos = span.el.body;
@@ -339,7 +338,7 @@ async function walkSpan<C extends FrameClaim>(
   };
   const claimOf: ClaimOf<C> = (trackNumber) => claims.get(trackNumber) ?? null;
   while (pos < span.end) {
-    const need = Math.min(BLOCK_HEAD_BYTES, span.end - pos);
+    const need = Math.min(BLOCK_PROBE_BYTES, span.end - pos);
     const window = await supply(pos, need);
     const el = E.readElement(window, pos);
     if (typeof el === "string") return BLOCK_REFUSAL.notAnElement;
@@ -349,14 +348,14 @@ async function walkSpan<C extends FrameClaim>(
     }
     if (STRAY_IDS.has(el.id)) return BLOCK_REFUSAL.strayBlock;
     if (!CLUSTER_CHILD_IDS.has(el.id)) {
-      if ("open" in span.el && CLUSTER_END_IDS.has(el.id)) return { frames, end: pos, carried };
+      if ("open" in span.el && SEGMENT_CHILD_IDS.has(el.id)) return { frames, end: pos, carried };
       return BLOCK_REFUSAL.stranger;
     }
     if (el.next > span.end) return BLOCK_REFUSAL.runsPastCluster;
     if (FRAME_IDS.has(el.id)) {
-      const attributed = await frameIn(el, clusterTime, window, claimOf, supply);
-      if (typeof attributed === "string") return attributed;
-      if (attributed !== null) frames.push(attributed);
+      const claimed = await frameIn(el, clusterTicks, window, claimOf, supply);
+      if (typeof claimed === "string") return claimed;
+      if (claimed !== null) frames.push(claimed);
     }
     pos = el.next;
   }

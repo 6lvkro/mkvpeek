@@ -1,5 +1,5 @@
 import type { Witness, WitnessOf } from "../frames/claim.js";
-import { readOrderWitness, SUBSTATION_CODECS } from "./ass.js";
+import { readOrderWitness, SUBSTATION_CODECS } from "./substation.js";
 
 export const subtitleWitnessOf: WitnessOf = (entry) => WITNESSES.get(entry.codecId) ?? null;
 

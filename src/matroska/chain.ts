@@ -86,7 +86,7 @@ export async function* hopTopLevel(
  *
  * In a sizeless cluster the search goes as far as the window reaches.
  */
-export function readClusterTime(window: Window, cluster: Element | OpenElement): number | null {
+export function readClusterTicks(window: Window, cluster: Element | OpenElement): number | null {
   const end = "open" in cluster ? E.reachOf(window) : cluster.next;
   try {
     for (const field of E.children(window, cluster.body, end - cluster.body)) {

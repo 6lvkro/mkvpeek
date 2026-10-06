@@ -56,7 +56,7 @@ export const BLOCK_REFUSAL = {
 
 export type BlockClause = (typeof BLOCK_REFUSAL)[keyof typeof BLOCK_REFUSAL];
 
-export const BLOCK_HEAD_BYTES = 32;
+export const BLOCK_PROBE_BYTES = 32;
 
 /**
  * One block element as a frame.
@@ -75,9 +75,9 @@ export async function frameIn<C extends FrameClaim>(
   let size = outer.size;
   let durationTicks: number | null = null;
   if (outer.id === E.ID.cluster.BLOCK_GROUP) {
-    const probe = Math.min(outer.size, BLOCK_GROUP_PROBE_BYTES);
-    if (!E.covers(window, outer.body, probe)) {
-      window = await supply(outer.body, probe);
+    const probeBytes = Math.min(outer.size, BLOCK_GROUP_PROBE_BYTES);
+    if (!E.covers(window, outer.body, probeBytes)) {
+      window = await supply(outer.body, probeBytes);
     }
     let inner: Element | null = null;
     let pos = outer.body;
@@ -101,27 +101,27 @@ export async function frameIn<C extends FrameClaim>(
     body = inner.body;
     size = inner.size;
   }
-  const need = Math.min(BLOCK_FIELD_BYTES, size);
+  const need = Math.min(MAX_BLOCK_HEAD_BYTES, size);
   if (!E.covers(window, body, need)) {
     window = await supply(body, need);
   }
-  const head = readBlockHead(window, body, size);
-  if (typeof head === "string") return head;
-  const claim = claimOf(head.trackNumber);
+  const blockHead = readBlockHead(window, body, size);
+  if (typeof blockHead === "string") return blockHead;
+  const claim = claimOf(blockHead.trackNumber);
   if (claim === null) return null;
-  const fault = blockFault(head);
+  const fault = blockFault(blockHead);
   if (fault !== null) return fault;
-  const covering = E.covers(window, head.payloadAt, head.payloadSize)
+  const covering = E.covers(window, blockHead.payloadAt, blockHead.payloadSize)
     ? window
-    : await supply(head.payloadAt, head.payloadSize);
-  const stored = E.readBytes(covering, head.payloadAt, head.payloadSize);
+    : await supply(blockHead.payloadAt, blockHead.payloadSize);
+  const stored = E.readBytes(covering, blockHead.payloadAt, blockHead.payloadSize);
   let payload: Uint8Array;
   try {
     payload = claim.undo === null ? stored.slice() : await claim.undo(stored);
   } catch {
     return BLOCK_REFUSAL.undecodable;
   }
-  const startTicks = clusterTicks + head.relTicks;
+  const startTicks = clusterTicks + blockHead.relTicks;
   return { claim, startTicks, durationTicks, payload };
 }
 
@@ -132,13 +132,13 @@ export function heldBlockHead(window: Window, outer: Element): BlockHead | null 
     if (!E.fits(first, outer.next) || first.id !== E.ID.blockGroup.BLOCK) return null;
     block = first;
   }
-  const head = readBlockHead(window, block.body, block.size);
-  return typeof head === "string" ? null : head;
+  const blockHead = readBlockHead(window, block.body, block.size);
+  return typeof blockHead === "string" ? null : blockHead;
 }
 
 const TIME_AND_FLAGS_BYTES = 3;
 
-const BLOCK_FIELD_BYTES = E.MAX_VINT_BYTES + TIME_AND_FLAGS_BYTES;
+const MAX_BLOCK_HEAD_BYTES = E.MAX_VINT_BYTES + TIME_AND_FLAGS_BYTES;
 
 const BLOCK_GROUP_PROBE_BYTES = 256;
 
@@ -161,8 +161,8 @@ function readBlockHead(window: Window, body: number, size: number): BlockHead | 
   };
 }
 
-function blockFault(block: BlockHead): BlockClause | null {
-  if (block.laced) return BLOCK_REFUSAL.laced;
-  if (block.payloadSize < 0) return BLOCK_REFUSAL.shortHead;
+function blockFault(blockHead: BlockHead): BlockClause | null {
+  if (blockHead.laced) return BLOCK_REFUSAL.laced;
+  if (blockHead.payloadSize < 0) return BLOCK_REFUSAL.shortHead;
   return null;
 }
