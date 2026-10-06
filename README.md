@@ -55,8 +55,8 @@ import { openContainer, RefusalError, subtitleFiles } from "mkvpeek";
 try {
   const container = await openContainer("video.mkv");
   try {
-    for (const { track, format, text } of await subtitleFiles(container)) {
-      await writeFile(`${track.index}.${format}`, text);
+    for (const { track, format, bytes } of await subtitleFiles(container)) {
+      await writeFile(`${track.index}.${format}`, bytes);
     }
   } finally {
     await container.close();
@@ -67,16 +67,16 @@ try {
 }
 ```
 
-`subtitleFiles` reads, in one plan, every ASS, SSA, SubRip or WebVTT track of `container.tracks` that `subtitleFile` can write and `readable` answers true for, and writes each one out.
+`subtitleFiles` reads, in one plan, every ASS, SSA, SubRip or WebVTT track of `container.tracks` that `readable` answers true for, and writes each one out; `formats` names the formats to write instead, such as `sup` for PGS.
 It asks `frames` for no other track, and writes nothing where the read is refused.
-For any other choice of tracks, `frames` reads the tracks you pass, `readable` says which types and encodings it reads, and `subtitleFile` writes one track out from the frames.
+For any other choice of tracks, `frames` reads the tracks you pass, `readable` says which types and encodings it reads, `subtitleFormat` says what `subtitleFile` writes a track as, and `subtitleFile` writes one track out from the frames.
 
 Where `await using` is available, it closes the container on the way out of the block.
 
 ```ts
 await using container = await openContainer("video.mkv");
-for (const { track, format, text } of await subtitleFiles(container)) {
-  await writeFile(`${track.index}.${format}`, text);
+for (const { track, format, bytes } of await subtitleFiles(container)) {
+  await writeFile(`${track.index}.${format}`, bytes);
 }
 ```
 

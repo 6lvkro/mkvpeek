@@ -14,8 +14,9 @@ export type {
 export type { UrlOptions } from "./io/http.js";
 export { urlSource } from "./io/http.js";
 export type { Source, Trip } from "./io/source.js";
-export type { SubtitleFile } from "./subtitle/contract.js";
-export { subtitleFile, subtitleFiles } from "./subtitle/write.js";
+export type { SubtitleFile, SubtitleFormat } from "./subtitle/contract.js";
+export type { SubtitleOptions } from "./subtitle/write.js";
+export { subtitleFile, subtitleFiles, subtitleFormat } from "./subtitle/write.js";
 export type { Track, TrackType } from "./tracks.js";
 export type {
   Abortable,

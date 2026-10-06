@@ -21,6 +21,8 @@ export type {
   RefusalCode,
   Source,
   SubtitleFile,
+  SubtitleFormat,
+  SubtitleOptions,
   Target,
   Track,
   TrackFlags,
@@ -33,6 +35,7 @@ export {
   RefusalError,
   subtitleFile,
   subtitleFiles,
+  subtitleFormat,
   worthFallback,
 } from "../index.js";
 export { openContainer, peekTracks } from "./entry.js";

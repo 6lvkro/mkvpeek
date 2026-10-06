@@ -1,14 +1,36 @@
 import type { Frame } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
-import type { SubtitleFile } from "./contract.js";
+import type { SubtitleFile, SubtitleFormat } from "./contract.js";
 
-/** A track's own frames as the file ffmpeg's -c:s copy writes, or null for a codec it does not write. */
-export function assemble(track: Track, frames: readonly Frame[]): SubtitleFile | null {
-  const assembler = ASSEMBLERS.get(track.codecId);
-  return assembler === undefined ? null : assembler(track, frames);
+interface Writer {
+  format: SubtitleFormat;
+  write: (frames: readonly Frame[]) => Uint8Array;
 }
 
-type Assembler = (track: Track, frames: readonly Frame[]) => SubtitleFile | null;
+/** A track's own frames as the file ffmpeg's -c:s copy writes, or null for a track it does not write. */
+export function assemble(track: Track, frames: readonly Frame[]): SubtitleFile | null {
+  const writer = writerOf(track);
+  return writer === null ? null : { track, format: writer.format, bytes: writer.write(frames) };
+}
+
+export function writerOf(track: Track): Writer | null {
+  switch (track.codecId) {
+    case "S_TEXT/ASS":
+    case "S_TEXT/SSA":
+    case "S_SSA":
+    case "S_ASS":
+      return substationWriter(track);
+    case "S_TEXT/UTF8":
+      return { format: "srt", write: (frames) => ENCODER.encode(assembleSrt(frames)) };
+    case "D_WEBVTT/SUBTITLES":
+    case "D_WEBVTT/CAPTIONS":
+      return { format: "vtt", write: (frames) => ENCODER.encode(assembleVtt(frames)) };
+    case "S_HDMV/PGS":
+      return { format: "sup", write: assembleSup };
+    default:
+      return null;
+  }
+}
 
 interface Dialogue {
   order: bigint;
@@ -40,6 +62,8 @@ interface Elapsed {
 
 const UTF8 = new TextDecoder("utf-8", { ignoreBOM: true });
 
+const ENCODER = new TextEncoder();
+
 const MS_PER_SECOND = 1000;
 const CS_PER_SECOND = 100;
 const MS_PER_CS = MS_PER_SECOND / CS_PER_SECOND;
@@ -57,14 +81,15 @@ const C_LONG = /^[ \t\n\v\f\r]*([+-]?\d+)/;
 const LONG_MAX = 2n ** 63n - 1n;
 const LONG_MIN = -(2n ** 63n);
 
-const ASSEMBLERS: ReadonlyMap<string, Assembler> = new Map<string, Assembler>([
-  ...["S_TEXT/ASS", "S_TEXT/SSA", "S_SSA", "S_ASS"].map(
-    (codec) => [codec, assembleSubstation] as const,
-  ),
-  ["S_TEXT/UTF8", assembleSrt],
-  ["D_WEBVTT/SUBTITLES", assembleVtt],
-  ["D_WEBVTT/CAPTIONS", assembleVtt],
-]);
+/** "PG", then the PTS and the DTS, ahead of each segment of a .sup file. */
+const SUP_HEAD_BYTES = 10;
+
+const SUP_MAGIC = 0x5047;
+
+const SUP_TICKS_PER_MS = 90;
+
+/** A PGS segment's type and its 16-bit size. */
+const SEGMENT_HEAD_BYTES = 3;
 
 const padded = (n: number, width = 2): string => String(n).padStart(width, "0");
 
@@ -76,38 +101,48 @@ const past = (text: string, at: number, prefix: string): number =>
 const precedes = (a: QueuedDialogue, b: QueuedDialogue): boolean =>
   a.order < b.order || (a.order === b.order && a.arrival < b.arrival);
 
-function assembleSubstation(track: Track, frames: readonly Frame[]): SubtitleFile | null {
+/** A SubStation track is written in the format its script's head states, and not without a head. */
+function substationWriter(track: Track): Writer | null {
   if (track.codecPrivate === null) return null;
   const script = UTF8.decode(track.codecPrivate);
+  const format = script === "" || cString(script).includes("\n[V4+ Styles]") ? "ass" : "ssa";
+  const write = (frames: readonly Frame[]) =>
+    ENCODER.encode(assembleSubstation(script, format, frames));
+  return { format, write };
+}
+
+function assembleSubstation(
+  script: string,
+  format: "ass" | "ssa",
+  frames: readonly Frame[],
+): string {
   const searched = cString(script);
   const eventsAt = searched.indexOf("\n[Events]");
   const formatAt = eventsAt < 0 ? -1 : searched.indexOf("Format:", eventsAt);
   const formatEnd = formatAt < 0 ? -1 : searched.indexOf("\n", formatAt);
   const headEnd = formatEnd < 0 ? script.length : formatEnd + 1;
-  const ssa = script !== "" && !searched.includes("\n[V4+ Styles]");
-  const firstColumn = ssa ? "Marked" : "Layer";
+  const firstColumn = format === "ass" ? "Layer" : "Marked";
   const added =
     script !== "" && eventsAt < 0
       ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n`
       : "";
-  const dialogues = frames.map((frame) => dialogueOf(frame, ssa));
+  const dialogues = frames.map((frame) => dialogueOf(frame, format));
   const written = inReadOrder(dialogues).map((line) => `Dialogue: ${line}\n`);
   const head = lines(script.slice(0, headEnd));
   const trailer = lines(script.slice(headEnd));
-  const text = `${head}${added}${written.join("")}${trailer}`;
-  return { track, format: ssa ? "ssa" : "ass", text };
+  return `${head}${added}${written.join("")}${trailer}`;
 }
 
-function assembleSrt(track: Track, frames: readonly Frame[]): SubtitleFile {
+function assembleSrt(frames: readonly Frame[]): string {
   const events = frames.map((frame, i) => {
     const [start, end] = timesOf(frame, 1);
     const payload = UTF8.decode(frame.data);
     return `${String(i + 1)}\n${srtTime(start)} --> ${srtTime(end)}\n${payload}\n\n`;
   });
-  return { track, format: "srt", text: events.join("") };
+  return events.join("");
 }
 
-function assembleVtt(track: Track, frames: readonly Frame[]): SubtitleFile {
+function assembleVtt(frames: readonly Frame[]): string {
   const cues = frames.map((frame) => {
     const { id, settings, text } = vttCueOf(UTF8.decode(frame.data));
     const [start, end] = timesOf(frame, 1);
@@ -115,7 +150,46 @@ function assembleVtt(track: Track, frames: readonly Frame[]): SubtitleFile {
     const timingTail = settings === "" ? "" : ` ${settings}`;
     return `\n${idLine}${vttTime(start)} --> ${vttTime(end)}${timingTail}\n${text}\n`;
   });
-  return { track, format: "vtt", text: `WEBVTT\n${cues.join("")}` };
+  return `WEBVTT\n${cues.join("")}`;
+}
+
+function assembleSup(frames: readonly Frame[]): Uint8Array {
+  const parts: Uint8Array[] = [];
+  for (const frame of frames) {
+    const head = supHead(Math.round(frame.startMs * SUP_TICKS_PER_MS));
+    for (const segment of segmentsOf(frame.data)) parts.push(head, segment);
+  }
+  const file = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    file.set(part, at);
+    at += part.length;
+  }
+  return file;
+}
+
+/** The ticks are written in 32 bits, so a start past them wraps as ffmpeg's does. */
+function supHead(ticks: number): Uint8Array {
+  const head = new Uint8Array(SUP_HEAD_BYTES);
+  const view = new DataView(head.buffer);
+  view.setUint16(0, SUP_MAGIC);
+  view.setUint32(2, ticks);
+  view.setUint32(6, ticks);
+  return head;
+}
+
+/** A PGS frame's whole segments, leaving out what follows the last of them. */
+function segmentsOf(data: Uint8Array): Uint8Array[] {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const segments: Uint8Array[] = [];
+  let at = 0;
+  while (data.length - at >= SEGMENT_HEAD_BYTES) {
+    const end = at + SEGMENT_HEAD_BYTES + view.getUint16(at + 1);
+    if (end > data.length) break;
+    segments.push(data.subarray(at, end));
+    at = end;
+  }
+  return segments;
 }
 
 /** CR, LF and CRLF each end a line, and each is written ending in LF. */
@@ -130,16 +204,16 @@ function timesOf(frame: Frame, msPerUnit: number): readonly [number, number] {
   return [start, start + Math.round((frame.durationMs ?? 0) / msPerUnit)];
 }
 
-function dialogueOf(frame: Frame, ssa: boolean): Dialogue {
+function dialogueOf(frame: Frame, format: "ass" | "ssa"): Dialogue {
   const payload = cString(UTF8.decode(frame.data));
   const order = cStrtol(payload, 0);
   const fieldAt = past(payload, order.end, ",");
-  const layerAt = ssa ? past(payload, fieldAt, MARKED_PREFIX) : fieldAt;
+  const layerAt = format === "ass" ? fieldAt : past(payload, fieldAt, MARKED_PREFIX);
   const layer = cStrtol(payload, layerAt);
   const restAt = past(payload, layer.end, ",");
   const rest = lineEndsTrimmed(payload.slice(restAt));
   const [start, end] = timesOf(frame, MS_PER_CS);
-  const lead = ssa ? MARKED_PREFIX : "";
+  const lead = format === "ass" ? "" : MARKED_PREFIX;
   const line = `${lead}${String(layer.value)},${substationTime(start)},${substationTime(end)},${rest}`;
   return { order: order.value, line };
 }
