@@ -1,5 +1,6 @@
 export type { Container, PeekOptions, PeekOutcome } from "./container/contract.js";
 export type { Target } from "./container/target.js";
+export type { AsyncDisposal } from "./disposal.js";
 export { openContainer, peekTracks } from "./entry/browser.js";
 export type {
   FetchKnobs,

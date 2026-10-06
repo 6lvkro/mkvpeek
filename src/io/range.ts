@@ -1,3 +1,4 @@
+import { type AsyncDisposal, disposable } from "../disposal.js";
 import {
   abortReason,
   available,
@@ -46,7 +47,7 @@ export function rangeSource(
   url: string,
   transport: OwnedTransport,
   { stallMs, signal: given }: RangeOptions,
-): Source {
+): Source & AsyncDisposal {
   const stall =
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
       ? stallMs
@@ -85,12 +86,14 @@ export function rangeSource(
     return readOverRanges(invariants, at, bounded, borrowed, signal);
   };
 
-  return {
+  const release = () => Promise.resolve(dispose?.());
+  const source: Source = {
     size,
     read,
-    ...(dispose === undefined ? {} : { close: () => Promise.resolve(dispose()) }),
+    ...(dispose === undefined ? {} : { close: release }),
     trip: "remote",
   };
+  return disposable(source, release);
 }
 
 interface Watchdog {

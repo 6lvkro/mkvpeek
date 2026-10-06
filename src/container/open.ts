@@ -1,3 +1,4 @@
+import { disposable } from "../disposal.js";
 import { claimFor, type FrameFile } from "../frames/claim.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
 import { framesOf } from "../frames/read.js";
@@ -64,6 +65,7 @@ class LeasedContainer implements Container {
   readonly #closing = new AbortController();
   readonly #pending = new Set<Promise<unknown>>();
   #closed: Promise<void> | null = null;
+  declare readonly [Symbol.asyncDispose]: () => Promise<void>;
 
   constructor(lease: Lease, opened: OpenedSegment, info: ContainerInfo, inflate: Inflate) {
     const source = withPendingReads(lease.source, this.#pending);
@@ -74,6 +76,7 @@ class LeasedContainer implements Container {
     const closing = this.#closing.signal;
     this.#file = fileOf(held, info, inflate, closing);
     this.#attachments = sharedAndKept((signal) => readAttachments(held, signal), closing);
+    disposable(this, () => this.close());
   }
 
   async attachments(options: Abortable = {}): Promise<Attachment[]> {

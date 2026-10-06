@@ -1,3 +1,4 @@
+import type { AsyncDisposal } from "../disposal.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
 import type { Abortable, Attachment, ContainerInfo, PeekCode } from "../vocabulary.js";
@@ -21,7 +22,7 @@ export interface PeekOutcome<T extends Track = Track> {
  *
  * A structured clone of it carries the listing alone.
  */
-export interface Container {
+export interface Container extends AsyncDisposal {
   readonly tracks: Track[];
   readonly info: ContainerInfo;
   /** Read by the first call that asks, and kept. */

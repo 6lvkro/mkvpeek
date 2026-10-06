@@ -6,6 +6,7 @@
 
 export type {
   Abortable,
+  AsyncDisposal,
   Attachment,
   Container,
   ContainerInfo,

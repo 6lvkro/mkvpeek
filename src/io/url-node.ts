@@ -2,7 +2,7 @@
 
 import http from "node:http";
 import https from "node:https";
-
+import type { AsyncDisposal } from "../disposal.js";
 import {
   bytesRange,
   type OwnedTransport,
@@ -26,7 +26,10 @@ import {
  *
  * A server that answers a Range request with anything but 206 fails the read as `source-failed`.
  */
-export async function urlSource(url: string, options: UrlOptions = {}): Promise<Source> {
+export async function urlSource(
+  url: string,
+  options: UrlOptions = {},
+): Promise<Source & AsyncDisposal> {
   if (options.fetch !== undefined) return viaFetch(url, options);
   const transport = nodeTransport(url, options);
   return rangeSource(url, transport, options);

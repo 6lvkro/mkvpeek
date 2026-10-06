@@ -1,5 +1,6 @@
 /** URL policy and the fetch transport. */
 
+import type { AsyncDisposal } from "../disposal.js";
 import { bytesRange, type RangeOptions, type RangeTransport, rangeSource } from "./range.js";
 import type { Source } from "./source.js";
 
@@ -34,7 +35,10 @@ export function withoutHeaders(
  *
  * A server that answers a Range request with anything but 206 fails the read as `source-failed`.
  */
-export async function urlSource(url: string, options: UrlOptions = {}): Promise<Source> {
+export async function urlSource(
+  url: string,
+  options: UrlOptions = {},
+): Promise<Source & AsyncDisposal> {
   const transport = fetchTransport(url, options);
   return rangeSource(url, transport, options);
 }

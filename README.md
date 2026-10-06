@@ -72,6 +72,15 @@ try {
 It asks `frames` for no other track, and writes nothing where the read is refused.
 For any other choice of tracks, `frames` reads the tracks you pass, `readable` says which types and encodings it reads, and `subtitleFile` writes one track out from the frames.
 
+Where `await using` is available, it closes the container on the way out of the block.
+
+```ts
+await using container = await openContainer("video.mkv");
+for (const { track, format, text } of await subtitleFiles(container)) {
+  await writeFile(`${track.index}.${format}`, text);
+}
+```
+
 For options the package cannot predefine, open the source yourself; whoever opens it closes it.
 
 ```ts
