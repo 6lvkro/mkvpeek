@@ -9,9 +9,9 @@ import {
   type RangeReply,
   type RangeTransport,
   rangeSource,
-} from "./range.js";
-import type { Source } from "./source.js";
-import { abortReason, onAbort } from "./source.js";
+} from "../io/range.js";
+import type { Source } from "../io/source.js";
+import { abortReason, onAbort } from "../io/source.js";
 import {
   httpTarget,
   TRANSPORT_OWNED_HEADERS,
@@ -19,7 +19,7 @@ import {
   urlSource as viaFetch,
   whyInadmissible,
   withoutHeaders,
-} from "./url.js";
+} from "../io/url.js";
 
 /**
  * An HTTP source over `node:http`, or over `fetch` when one is passed.

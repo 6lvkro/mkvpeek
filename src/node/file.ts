@@ -1,6 +1,6 @@
 import { open, statfs } from "node:fs/promises";
 
-import { available, LARGE_READ_BYTES, lend, type Source } from "./source.js";
+import { available, LARGE_READ_BYTES, lend, type Source } from "../io/source.js";
 
 export async function fileSource(path: string): Promise<Source> {
   const handle = await open(path, "r");

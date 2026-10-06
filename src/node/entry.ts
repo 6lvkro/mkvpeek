@@ -8,12 +8,12 @@ import type { Container, PeekOptions, PeekOutcome } from "../container/contract.
 import { type Platform, peekWith } from "../container/listing.js";
 import { openWith } from "../container/open.js";
 import { type Target, urlRefusal } from "../container/target.js";
-import { fileSource } from "../io/file.js";
-import { inflateByZlib } from "../io/inflate-node.js";
 import type { Source } from "../io/source.js";
 import { isHttpUrl, namesAuthority } from "../io/url.js";
-import { urlSource } from "../io/url-node.js";
 import type { Abortable, RefusalCode } from "../vocabulary.js";
+import { fileSource } from "./file.js";
+import { urlSource } from "./http.js";
+import { inflateByZlib } from "./inflate.js";
 
 /**
  * Peeks at a container's track list.

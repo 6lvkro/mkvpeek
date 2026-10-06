@@ -1,9 +1,9 @@
-import type { Container, PeekOptions, PeekOutcome } from "../container/contract.js";
-import { type Platform, peekWith } from "../container/listing.js";
-import { openWith } from "../container/open.js";
-import { type Target, viaUrl } from "../container/target.js";
-import { inflateByStream } from "../io/inflate.js";
-import type { Abortable } from "../vocabulary.js";
+import type { Container, PeekOptions, PeekOutcome } from "./container/contract.js";
+import { type Platform, peekWith } from "./container/listing.js";
+import { openWith } from "./container/open.js";
+import { type Target, viaUrl } from "./container/target.js";
+import { inflateByStream } from "./io/inflate.js";
+import type { Abortable } from "./vocabulary.js";
 
 /**
  * Peeks at a container's track list.

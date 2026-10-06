@@ -1,15 +1,8 @@
-/**
- * The Node.js entry point.
- *
- * It includes the whole browser surface.
- */
-
+export type { Container, PeekOptions, PeekOutcome } from "./container/contract.js";
+export type { Target } from "./container/target.js";
+export type { AsyncDisposal } from "./disposal.js";
+export { openContainer, peekTracks } from "./entry.js";
 export type {
-  Abortable,
-  AsyncDisposal,
-  Attachment,
-  Container,
-  ContainerInfo,
   FetchKnobs,
   Frame,
   FrameFinder,
@@ -18,26 +11,20 @@ export type {
   FrameProgress,
   FrameTuning,
   FrameVia,
+} from "./frames/contract.js";
+export type { Source, Trip } from "./io/source.js";
+export type { UrlOptions } from "./io/url.js";
+export { urlSource } from "./io/url.js";
+export type { SubtitleFile } from "./subtitle/contract.js";
+export { subtitleFile, subtitleFiles } from "./subtitle/write.js";
+export type { Track, TrackType } from "./tracks.js";
+export type {
+  Abortable,
+  Attachment,
+  ContainerInfo,
   PeekCode,
-  PeekOptions,
-  PeekOutcome,
   RefusalCode,
-  Source,
-  SubtitleFile,
-  Target,
-  Track,
   TrackFlags,
   TrackTag,
-  TrackType,
-  Trip,
-  UrlOptions,
-} from "./browser.js";
-export {
-  isRefusalCode,
-  RefusalError,
-  subtitleFile,
-  subtitleFiles,
-  worthFallback,
-} from "./browser.js";
-export { openContainer, peekTracks } from "./entry/node.js";
-export { urlSource } from "./io/url-node.js";
+} from "./vocabulary.js";
+export { isRefusalCode, RefusalError, worthFallback } from "./vocabulary.js";

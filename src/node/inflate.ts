@@ -1,5 +1,5 @@
 import { inflateSync } from "node:zlib";
-import type { Inflate } from "./source.js";
+import type { Inflate } from "../io/source.js";
 
 export const inflateByZlib: Inflate = async (deflated, most) => {
   const zlibOptions = { info: true, maxOutputLength: most };
