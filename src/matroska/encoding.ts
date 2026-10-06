@@ -1,8 +1,4 @@
-/**
- * The ContentEncodings a track states, and how to undo them.
- *
- * zlib and header stripping are undone; encryption and the other compressions are not.
- */
+/** zlib and header stripping are undone; encryption and the other compressions are not. */
 
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
@@ -23,7 +19,6 @@ interface ContentCompression {
   settings: Uint8Array | null;
 }
 
-/** The ContentEncodingScope bit that covers the frames. */
 export const FRAMES_SCOPE = 1;
 
 export function undoFor(
@@ -81,12 +76,10 @@ const ZLIB_ALGO = 0;
 
 const HEADER_STRIPPING_ALGO = 3;
 
-/** The ContentEncodingScope bit that covers CodecPrivate. */
 const CODEC_PRIVATE_SCOPE = 2;
 
 const KNOWN_SCOPES = FRAMES_SCOPE | CODEC_PRIVATE_SCOPE;
 
-/** How many times its stored bytes a stream may be undone to, under {@linkcode MAX_INFLATED_BYTES}. */
 const MAX_AMPLIFICATION = 64;
 
 const COMPRESSION_TYPE = 0;

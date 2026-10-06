@@ -19,16 +19,21 @@ export interface ContainerInfo {
   title: string | null;
   muxingApp: string | null;
   writingApp: string | null;
+  /** null where the container states none, or one that is not a finite, non-negative number. */
   durationMs: number | null;
+  /** Nanoseconds per tick, 1,000,000 where the container states none or zero. */
   timestampScale: number;
 }
 
+/** What an attached file states of itself, its bytes left unread. */
 export interface Attachment {
   fileName: string | null;
   mimeType: string | null;
   description: string | null;
+  /** Where the file's bytes start in the container, for a read of `size` bytes; null where it holds none. */
   at: number | null;
   size: number;
+  /** The FileUID in hexadecimal, as `Track.uid` is spelt. */
   uid: string | null;
 }
 

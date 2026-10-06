@@ -3,11 +3,7 @@ import * as E from "../ebml.js";
 import { headerNeed } from "./chain.js";
 import type { Undo } from "./encoding.js";
 
-/**
- * The hand that supplies bytes.
- *
- * The walk buys them, the index finds them in held windows; failing that, a GrammarError.
- */
+/** The walk buys a block's bytes; the index finds them in held windows, or throws a GrammarError. */
 export type BytesSupply = (at: number, need: number) => Promise<Window>;
 
 /** How a chosen track's frames are undone. */
@@ -31,7 +27,7 @@ interface BlockHead {
   payloadSize: number;
 }
 
-/** The definitions that name which rule stood at a refusal. */
+/** The rule each block refusal names. */
 export const BLOCK_REFUSAL = {
   notThisTrack: "not-this-track",
   notACluster: "not-a-cluster",

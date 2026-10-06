@@ -155,7 +155,6 @@ export async function readAttachments(
   return last === null ? [] : attachments;
 }
 
-/** The pass that learned where the top-level elements are. */
 interface Located extends SegmentPass {
   offsets: Map<number, number>;
 }
@@ -182,9 +181,9 @@ const MAX_ATTACHED_FIELD_BYTES = 4096;
 const MAX_HEADER_ELEMENT_BYTES = 64 * 1024 ** 2;
 
 /**
- * The runaway cap of the attachment walk.
+ * The runaway cap of an attachment walk.
  *
- * The list and the walk inside each file count separately, so the worst case is their product.
+ * The list and the walk inside each file count apart, so the worst case is their product.
  */
 const MAX_ATTACHMENT_CHILDREN = 4096;
 
@@ -199,7 +198,6 @@ const defaultInfo = (): ContainerInfo => ({
 const readsAs = (el: ReturnType<typeof E.readElement>, id: number): el is Element =>
   E.decoded(el) && el.id === id;
 
-/** Fetches and parses one optional top-level element, or folds to the absent answer. */
 const fetchedOptional = <T>(
   located: Located,
   id: number,
@@ -212,12 +210,6 @@ const fetchedOptional = <T>(
     return parse(fetched.window, fetched.element) ?? fallback;
   });
 
-/**
- * The probe of one element.
- *
- * If the head is inside `held` it is used as is;
- * otherwise `ELEMENT_PROBE_BYTES` are bought within the limit.
- */
 function probed(located: Located, at: number, limit: number, held: Window): Promise<Window> {
   const need = headerNeed(at, limit);
   if (E.covers(held, at, need)) return Promise.resolve(held);
@@ -366,8 +358,8 @@ async function placeChained(located: Located, at: number): Promise<void> {
 function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | null {
   const byTrack: CueIndex = new Map();
   const { bytes } = window;
-  // The child walk is unrolled by hand,
-  // because with a cue point per subtitle frame an object per element is the cost.
+  // The child walk is unrolled by hand.
+  // With a cue point per subtitle frame, an object per element is the cost.
   const startOf = (at: number, need: number) => {
     const start = at - window.at;
     if (start < 0 || start + need > bytes.length) throw new E.GrammarError();
@@ -567,10 +559,9 @@ function parseTimestampScale(window: Window, info: Element): number {
 }
 
 /**
- * The walk over a parent's children.
+ * Null past the cap or past the parent.
  *
- * null past the cap or the parent;
- * it stops at a child that does not read and hands back the last window.
+ * A child that does not read ends the walk, which hands back the last window.
  */
 async function eachChildIn(
   located: Located,

@@ -34,13 +34,9 @@ export function peekTracks(target: Target, options?: Abortable): Promise<Listing
  * and throws a refusal at the open or at a read as a `RefusalError`.
  *
  * @example
- * const container = await openContainer(path);
- * try {
- *   const subtitles = container.tracks.filter((track) => track.type === "subtitle");
- *   for await (const frame of container.frames(subtitles)) console.log(frame.trackIndex, frame.data.length);
- * } finally {
- *   await container.close();
- * }
+ * await using container = await openContainer(path);
+ * const subtitles = container.tracks.filter((track) => track.type === "subtitle");
+ * for await (const frame of container.frames(subtitles)) console.log(frame.trackIndex, frame.data.length);
  */
 export function openContainer(target: Target, options?: Abortable): Promise<Container> {
   return openWith(PLATFORM, target, options);

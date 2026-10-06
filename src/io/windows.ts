@@ -1,9 +1,3 @@
-/**
- * The plumbing of windows.
- *
- * Makes windows from a source, indexes them, and reuses them.
- */
-
 import type { Window } from "../ebml.js";
 import * as E from "../ebml.js";
 import { inParallel } from "./lanes.js";
@@ -17,21 +11,11 @@ import {
   stopIfAborted,
 } from "./source.js";
 
-/** The window buffers the walk reuses. */
 export interface WindowPool {
-  /**
-   * A lease when the width fits the threshold and a slot.
-   *
-   * Otherwise null, which is the fresh-allocation path.
-   */
+  /** A lease when the width fits the threshold and a slot. */
   borrow(width: number): Lease | null;
 }
 
-/**
- * The lease of one slot.
- *
- * `release` is one-shot; a second call throws.
- */
 interface Lease {
   readonly bytes: Uint8Array;
   release: () => void;
@@ -164,13 +148,11 @@ export async function windowAt(
   return { at, bytes: held, fileSize };
 }
 
-/** A range, and whether the read asked for it or may only cross it. */
 interface MarkedRange {
   range: Range;
   isWanted: boolean;
 }
 
-/** Sorted ranges grouped so that one read takes each group, within the gap and under the cap. */
 function coalesced(
   sorted: readonly MarkedRange[],
   knobs: Pick<IndexFetch, "gapBytes">,

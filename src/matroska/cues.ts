@@ -20,11 +20,7 @@ import {
 } from "./chain.js";
 import type { CuePosition } from "./header.js";
 
-/**
- * The cluster the previous point named.
- *
- * Points naming the same cluster in a row share its element, its time and the last window.
- */
+/** Points naming the same cluster in a row share its element, its time and the last window. */
 export interface ClusterMemo {
   last: LastCluster | null;
 }
@@ -137,7 +133,6 @@ export function locateByCue(
   return cued;
 }
 
-/** Whether the cluster's own head places and dates the block as its cue did. */
 export function agreesWithCluster(
   windows: WindowIndex,
   point: CuePosition,

@@ -64,7 +64,6 @@ export async function* walkFrames(
       parked.push(resolve);
     });
   const queue = new HaltableQueue<HoppedCluster>(wake);
-  /** Waits until the cluster at `index` may be found; false once the walk has halted. */
   const admitted = async (index: number) => {
     while (!queue.halted && index - handedCount >= ahead) {
       await park();
@@ -103,6 +102,7 @@ export async function* walkFrames(
       while (await admitted(foundCount)) {
         let openCluster: HoppedCluster | null = null;
         for await (const { at, el, window } of hopTopLevel(reading, pos)) {
+          // An id the hop does not know may be a damaged Cluster, and skipping it would serve the file a cluster short.
           if (!TOP_LEVEL_IDS.has(el.id)) {
             refused = true;
             queue.halt();
@@ -195,11 +195,7 @@ interface WalkInvariants {
   signal: AbortSignal;
 }
 
-/**
- * A cluster span as the hop measured it.
- *
- * For a cluster without a size, `end` is where the walk has to stop (the end of the Segment).
- */
+/** For a cluster without a size, `end` is the end of the Segment. */
 interface ClusterSpan {
   at: number;
   el: Element | OpenElement;
@@ -213,11 +209,7 @@ interface SweptFrames {
 
 type WalkedCluster = (SweptFrames & { carried: Loaned }) | BlockClause;
 
-/**
- * A cluster the hop measured and put in the worker queue.
- *
- * The window is the one the hop read the head from, so it becomes the walk's first probe.
- */
+/** Its window is the one the hop read the head from, and the walk's first probe. */
 interface HoppedCluster {
   index: number;
   span: ClusterSpan;
@@ -238,11 +230,6 @@ const CLUSTER_CHILD_IDS = new Set<number>([
 
 const SEGMENT_CHILD_IDS = new Set<number>(Object.values(E.ID.segment));
 
-/**
- * Every child of the Segment plus the two globals.
- *
- * The hop dies on any id outside this set.
- */
 const TOP_LEVEL_IDS = new Set<number>([...SEGMENT_CHILD_IDS, ...Object.values(E.ID.global)]);
 
 /** How many clusters per lane the walk may find ahead of the one it hands over next. */
@@ -315,6 +302,7 @@ async function walkSpan(
   };
   const firstBounded = available(span.at, firstWidth, sized.fileSize);
   const adopted = seed !== undefined && E.covers(seed, span.at, firstBounded) ? seed : null;
+  // A Window so that nothing here releases it, as the ledger releases what was lent.
   let carried: Window = adopted ?? (await fetchWindow(span.at, firstWidth));
   const clusterTicks = readClusterTicks(carried, span.el);
   if (clusterTicks === null) return BLOCK_REFUSAL.noClusterTime;

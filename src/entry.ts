@@ -21,12 +21,8 @@ import type { Abortable } from "./vocabulary.js";
  *
  * @example
  * // Options the package cannot predefine: open the source yourself, and close what you opened.
- * const source = await urlSource(url, { headers });
- * try {
- *   const { tracks } = await peekTracks(source);
- * } finally {
- *   await source.close?.();
- * }
+ * await using source = await urlSource(url, { headers });
+ * const { tracks } = await peekTracks(source);
  *
  * @example
  * // Without loading an uploaded File into memory
@@ -48,13 +44,9 @@ export function peekTracks(target: Target, options?: Abortable): Promise<Listing
  *
  * @example
  * try {
- *   const container = await openContainer(url);
- *   try {
- *     const subtitles = container.tracks.filter((track) => track.type === "subtitle");
- *     for await (const frame of container.frames(subtitles)) console.log(frame.trackIndex, frame.startMs);
- *   } finally {
- *     await container.close();
- *   }
+ *   await using container = await openContainer(url);
+ *   const subtitles = container.tracks.filter((track) => track.type === "subtitle");
+ *   for await (const frame of container.frames(subtitles)) console.log(frame.trackIndex, frame.startMs);
  * } catch (error) {
  *   if (!(error instanceof RefusalError)) throw error;
  *   if (worthFallback(error.code)) await demux(url);

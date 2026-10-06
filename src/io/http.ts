@@ -1,5 +1,3 @@
-/** URL policy and the fetch transport. */
-
 import type { AsyncDisposal } from "../disposal.js";
 import { bytesRange, type RangeTransport, rangeSource } from "./range.js";
 import type { Source } from "./source.js";

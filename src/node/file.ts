@@ -40,7 +40,7 @@ const NETWORK_MAGIC: ReadonlySet<number> = new Set([
   0x6b414653, // kAFS
 ]);
 
-/** A guard whose only purpose is per-trip optimisation. */
+/** A check whose only purpose is the per-trip tuning. */
 async function isLocalDisk(path: string): Promise<boolean> {
   try {
     return !NETWORK_MAGIC.has((await statfs(path)).type);

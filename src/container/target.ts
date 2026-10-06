@@ -8,7 +8,6 @@ export type Target = Source | ArrayBufferView | ArrayBuffer | string;
 
 export type Opener = (target: string) => Promise<Source | RefusalCode>;
 
-/** A source a target became, and how to let it go where something was opened for it. */
 export interface TargetLease {
   source: Source;
   release?(): Promise<void>;
@@ -18,7 +17,6 @@ export interface TargetLease {
 export const viaUrl: Opener = async (target) =>
   isHttpUrl(target) ? urlSource(target) : "invalid-target";
 
-/** The source a target names, opened if a string named it; a target that will not open throws its refusal. */
 export async function leaseOf(target: Target, open: Opener): Promise<TargetLease> {
   if (typeof target !== "string") return { source: heldSource(target) };
   const parsed = URL.parse(target);

@@ -12,11 +12,7 @@ export interface OpenElement {
   open: true;
 }
 
-/**
- * A view of part of the file.
- *
- * Every coordinate is absolute, so it carries where it came from and how far the file goes.
- */
+/** A view of part of the file, whose every coordinate is absolute. */
 export interface Window {
   readonly at: number;
   readonly bytes: Uint8Array;
@@ -26,28 +22,19 @@ export interface Window {
 interface Vint {
   value: number;
   length: number;
-  /** The all-ones shape that means the size is unknown. */
   allOnes: boolean;
 }
 
-/** Nothing could be read at some position. */
 type Unread = "unread";
 
 /**
  * Thrown where a walk that stopped quietly
  * would turn a damaged list into a short one that looks whole.
- *
- * {@linkcode isGrammarError} tells which it was.
  */
 export class GrammarError extends Error {}
 
 export const DEFAULT_TIMESTAMP_SCALE = 1_000_000;
 
-/**
- * The widest a vint gets.
- *
- * Every header-size constant downstream derives from this number.
- */
 export const MAX_VINT_BYTES = 8;
 
 /**

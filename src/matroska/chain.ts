@@ -20,24 +20,18 @@ export interface SegmentPass {
   signal: AbortSignal | undefined;
 }
 
-/**
- * An element and the window its head was read from.
- *
- * For a cluster the window reaches the Timestamp.
- */
+/** For a cluster, the window reaches its Timestamp. */
 interface TopLevelHop {
   at: number;
   el: Element | OpenElement;
   window: Window;
 }
 
-/** Enough for any element's header. */
 export const ELEMENT_HEADER_BYTES = 2 * E.MAX_VINT_BYTES;
 
 /** Enough to read a cluster's header and its Timestamp. */
 export const CLUSTER_PROBE_BYTES = 64;
 
-/** The cluster children that carry frames. */
 export const FRAME_IDS: ReadonlySet<number> = new Set([
   E.ID.cluster.SIMPLE_BLOCK,
   E.ID.cluster.BLOCK_GROUP,
@@ -62,11 +56,7 @@ export async function readPastHead(
 
 export async function* hopTopLevel(
   pass: SegmentPass,
-  /**
-   * The end of a sizeless cluster is the walk's discovery.
-   *
-   * The hop that resumes after it passes it here.
-   */
+  /** A hop resumes past a sizeless cluster at the end the walk found. */
   from = pass.segment.body,
 ): AsyncGenerator<TopLevelHop> {
   let pos = from;
@@ -84,11 +74,7 @@ export async function* hopTopLevel(
   }
 }
 
-/**
- * A cluster's Timestamp.
- *
- * In a sizeless cluster the search goes as far as the window reaches.
- */
+/** In a sizeless cluster the search goes as far as the window reaches. */
 export function readClusterTicks(window: Window, cluster: Element | OpenElement): number | null {
   const end = "open" in cluster ? E.reachOf(window) : cluster.next;
   try {

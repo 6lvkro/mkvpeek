@@ -22,15 +22,19 @@ export interface Track<T extends TrackType = TrackType> {
   index: number;
   /** The container's TrackNumber. */
   number: number;
+  /** The TrackUID in hexadecimal, null where it is unstated, zero, or wider than eight bytes. */
   uid: string | null;
+  /** The Matroska CodecID, such as `S_TEXT/ASS`. */
   codecId: string;
   /** null when the track states none, or states an encoding over it this reader cannot undo. */
   codecPrivate: Uint8Array | null;
   /** Exactly what the container states, unnormalised; only no statement is null. */
   language: string | null;
+  /** The BCP 47 language, passed through as `language` is. */
   languageIetf: string | null;
   name: string | null;
   flags: TrackFlags;
+  /** Frame times already account for the largest CodecDelay any track states. */
   codecDelayNs: number;
   /** Empty when another track states the same TrackUID. */
   tags: TrackTag[];

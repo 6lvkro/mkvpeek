@@ -1,5 +1,3 @@
-/** URL policy over a node:http transport. */
-
 import http from "node:http";
 import https from "node:https";
 import type { AsyncDisposal } from "../disposal.js";

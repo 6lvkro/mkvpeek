@@ -24,6 +24,7 @@ export interface Source {
    * @param signal The signal of the read that asks, for a source that can cut a read in flight.
    */
   read(at: number, length: number, into?: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>;
+  /** Never called on a source handed in: whoever opened a source closes it. */
   close?(): Promise<void>;
   trip?: Trip;
 }
@@ -31,7 +32,6 @@ export interface Source {
 /** What kind of round trip a read to this source is. */
 export type Trip = "local" | "mount" | "remote";
 
-/** A source whose size has been asked. */
 export interface SizedSource {
   source: Source;
   fileSize: number;
@@ -60,7 +60,7 @@ export type WalkFetch = Pick<FetchKnobs, "blockAheadBytes" | "concurrency">;
 /**
  * Undoes zlib's deflate into a buffer of its own.
  *
- * It rejects bytes past the stream's end, and a stream that inflates past `most` bytes, which it stops inflating there.
+ * It rejects bytes past the stream's end, and a stream that inflates past `most` bytes, stopping there.
  */
 export type Inflate = (deflated: Uint8Array, most: number) => Promise<Uint8Array>;
 
@@ -78,11 +78,7 @@ export interface Link {
 
 type ReportBytes = (done: number, total: number) => void;
 
-/**
- * How much the opening read fetches.
- *
- * A number that usually finishes a typical header in one round trip.
- */
+/** The opening read, wide enough for a typical header in one round trip. */
 export const HEAD_BYTES = 128 * 1024;
 
 /**
@@ -94,14 +90,9 @@ export const LARGE_READ_BYTES = 16 * 1024;
 
 export const MAX_SPAN_BYTES = 4 * 1024 ** 2;
 
-/** The most a stored stream is undone to however much it stored, where ffmpeg stops growing a frame's buffer. */
+/** The most any stored stream is undone to, where ffmpeg stops growing a frame's buffer. */
 export const MAX_INFLATED_BYTES = 10_000_000;
 
-/**
- * Lends the front of the hint when it can hold the clamped answer.
- *
- * Otherwise null, and the caller allocates.
- */
 export const lend = (into: Uint8Array | undefined, bounded: number): Uint8Array | null =>
   into !== undefined && into.length >= bounded ? into.subarray(0, bounded) : null;
 
@@ -163,7 +154,6 @@ export function linkedSignal(...signals: ReadonlyArray<AbortSignal | undefined>)
   return { signal: linked.signal, abort, unlink };
 }
 
-/** The answer, or a rejection with the signal's reason where the signal fires first. */
 export function untilAborted<T>(answer: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const unhook = onAbort(signal, () => reject(abortReason(signal)));

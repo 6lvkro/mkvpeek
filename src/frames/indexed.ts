@@ -111,7 +111,7 @@ interface FetchedRound {
 
 const FRAMES_PER_ROUND = 4096;
 
-/** The ranges that lie past the head already read, each cut at the end of the file. */
+/** A range that crosses the head's edge is kept whole, since split there its element would lie in no window. */
 const unheld = (ranges: readonly Range[], head: Window): Range[] =>
   ranges.flatMap((range) => {
     const length = available(range.at, range.length, head.fileSize);
