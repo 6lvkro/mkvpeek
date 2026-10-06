@@ -1,4 +1,4 @@
-import { urlSource, whyCredentialed, whyInadmissible } from "../io/http.js";
+import { isHttpUrl, urlSource, whyCredentialed } from "../io/http.js";
 import { memorySource } from "../io/memory.js";
 import type { Source } from "../io/source.js";
 import { type RefusalCode, RefusalError } from "../vocabulary.js";
@@ -14,15 +14,9 @@ export interface TargetLease {
   release?(): Promise<void>;
 }
 
-export const urlRefusal = (parsed: URL): RefusalCode | null =>
-  whyInadmissible(parsed) === null ? null : "invalid-target";
-
 /** Opens a string target that can only be a URL. */
-export const viaUrl: Opener = async (target) => {
-  const parsed = URL.parse(target);
-  if (parsed === null) return "invalid-target";
-  return urlRefusal(parsed) ?? urlSource(target);
-};
+export const viaUrl: Opener = async (target) =>
+  isHttpUrl(target) ? urlSource(target) : "invalid-target";
 
 /** The source a target names, opened if a string named it; a target that will not open throws its refusal. */
 export async function leaseOf(target: Target, open: Opener): Promise<TargetLease> {
