@@ -183,7 +183,6 @@ export async function* walkFrames(
     watch.onProgress(fileSize, fileSize);
   } finally {
     ended.abort();
-    queue.halt();
     await settled;
   }
 }

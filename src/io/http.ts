@@ -103,8 +103,7 @@ function fetchTransport(url: string, options: UrlOptions): RangeTransport {
     const response = await fetchImpl(url, init);
     const reader = response.body?.getReader();
     const cancel = async () => {
-      const cancelling = reader === undefined ? response.body?.cancel() : reader.cancel();
-      await cancelling?.catch?.(() => {});
+      await reader?.cancel().catch(() => {});
     };
     return {
       status: response.status,

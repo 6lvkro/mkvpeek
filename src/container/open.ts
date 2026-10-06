@@ -219,7 +219,7 @@ function entriesOf(file: FrameFile, tracks: readonly Track[]): TrackEntry[] {
 
 function entryOf(file: FrameFile, track: Track): TrackEntry {
   const { index } = track;
-  const entry = Number.isInteger(index) ? file.trackEntries[index] : undefined;
+  const entry = file.trackEntries[index];
   if (entry !== undefined) {
     const own = trackOf(file, entry);
     if (statesTheSame(track, own)) return entry;
@@ -244,7 +244,7 @@ function statesTheSame(given: unknown, own: unknown): boolean {
 function sameBytes(given: unknown, own: Uint8Array): boolean {
   if (!ArrayBuffer.isView(given)) return false;
   const items = given as Uint8Array;
-  if (items.BYTES_PER_ELEMENT !== 1 || items.length !== own.length) return false;
+  if (items.length !== own.length) return false;
   for (let at = 0; at < own.length; at++) {
     if (items[at] !== own[at]) return false;
   }

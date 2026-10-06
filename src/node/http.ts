@@ -112,11 +112,7 @@ function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
     }
   };
   const dispose = () => {
-    for (const key of ["http:", "https:"] as const) {
-      try {
-        agent[key].destroy();
-      } catch {}
-    }
+    for (const key of ["http:", "https:"] as const) agent[key].destroy();
   };
   return Object.assign(transport, { dispose });
 }
