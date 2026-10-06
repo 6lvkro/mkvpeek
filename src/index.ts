@@ -1,9 +1,8 @@
-export type { Container, PeekOptions, PeekOutcome } from "./container/contract.js";
+export type { Container, Listing } from "./container/contract.js";
 export type { Target } from "./container/target.js";
 export type { AsyncDisposal } from "./disposal.js";
 export { openContainer, peekTracks } from "./entry.js";
 export type {
-  FetchKnobs,
   Frame,
   FrameFinder,
   FrameOptions,
@@ -22,9 +21,8 @@ export type {
   Abortable,
   Attachment,
   ContainerInfo,
-  PeekCode,
   RefusalCode,
   TrackFlags,
   TrackTag,
 } from "./vocabulary.js";
-export { isRefusalCode, RefusalError, worthFallback } from "./vocabulary.js";
+export { RefusalError, worthFallback } from "./vocabulary.js";

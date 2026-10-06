@@ -42,45 +42,20 @@ export interface Range {
   length: number;
 }
 
-/** The index path's knobs, the shape of a planned read of scattered ranges. */
-export interface IndexFetch {
-  /**
-   * Two ranges closer than this are fetched as one, gap included.
-   *
-   * Raising it trades bytes for round trips; at 0 only ranges that already touch are merged.
-   */
+/** What a preset sets for one trip. */
+export interface FetchKnobs {
+  /** Two ranges closer than this are fetched as one, gap included. */
   gapBytes: number;
-  /**
-   * How far past its stated size to look at each point the plan names.
-   *
-   * Raising it makes more points finish in one read at the cost of bytes,
-   * and a window this wide sits on the heap per point.
-   */
+  /** How far past its stated size to look at each point the plan names. */
   cueAheadBytes: number;
-  /**
-   * Concurrent range requests.
-   *
-   * WARN: on a network path this is the number of open connections,
-   * so **mind the target server's socket limit.**
-   */
+  /** How far past a block the walk reads ahead when it reads that block. */
+  blockAheadBytes: number;
   concurrency: number;
 }
 
-/** The walk path's knobs, the shape of a scan that starts at the front. */
-export interface WalkFetch {
-  /**
-   * How far past a block the walk reads ahead when it reads that block.
-   *
-   * Raising it trades bytes for round trips; at 0 it reads only what was asked for.
-   */
-  blockAheadBytes: number;
-  /**
-   * Walk lanes.
-   *
-   * On a network path it means the same as {@linkcode IndexFetch.concurrency}.
-   */
-  concurrency: number;
-}
+export type IndexFetch = Pick<FetchKnobs, "gapBytes" | "cueAheadBytes" | "concurrency">;
+
+export type WalkFetch = Pick<FetchKnobs, "blockAheadBytes" | "concurrency">;
 
 /**
  * Undoes zlib's deflate into a buffer of its own.
@@ -92,6 +67,13 @@ export type Inflate = (deflated: Uint8Array, most: number) => Promise<Uint8Array
 export interface Watch {
   onProgress: ReportBytes;
   signal: AbortSignal;
+}
+
+/** A signal that fires with the first of the signals it links, or at its own abort, and then listens to none. */
+export interface Link {
+  signal: AbortSignal;
+  abort: (reason?: unknown) => void;
+  unlink: () => void;
 }
 
 type ReportBytes = (done: number, total: number) => void;
@@ -162,39 +144,23 @@ export function available(at: number, length: number, size: number): number {
   return Math.max(0, Math.min(length, size - at));
 }
 
-/** A signal that fires when either does, and the call that stops it listening to them. */
-export function linkedSignal(
-  outer: AbortSignal | undefined,
-  inner: AbortSignal,
-): { signal: AbortSignal; unlink: () => void } {
+export function linkedSignal(...signals: ReadonlyArray<AbortSignal | undefined>): Link {
   const linked = new AbortController();
-  const unlink = forwardAbort([outer, inner], linked);
-  return { signal: linked.signal, unlink };
-}
-
-/**
- * Aborts `into` with the reason of the first of the signals to fire, and from then listens to none.
- *
- * The call it answers stops the listening sooner.
- */
-export function forwardAbort(
-  signals: ReadonlyArray<AbortSignal | undefined>,
-  into: AbortController,
-): () => void {
   const unhooks: Array<() => void> = [];
   const unlink = () => {
     for (const unhook of unhooks.splice(0)) unhook();
   };
+  const abort = (reason?: unknown) => {
+    unlink();
+    linked.abort(reason);
+  };
   for (const signal of signals) {
     if (signal === undefined) continue;
-    const fired = () => {
-      unlink();
-      into.abort(signal.reason);
-    };
+    const fired = () => abort(signal.reason);
     unhooks.push(onAbort(signal, fired));
-    if (into.signal.aborted) break;
+    if (linked.signal.aborted) break;
   }
-  return unlink;
+  return { signal: linked.signal, abort, unlink };
 }
 
 /** The answer, or a rejection with the signal's reason where the signal fires first. */

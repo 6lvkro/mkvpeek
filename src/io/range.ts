@@ -2,12 +2,11 @@ import { type AsyncDisposal, disposable } from "../disposal.js";
 import {
   abortReason,
   available,
-  forwardAbort,
   givenSignal,
   HEAD_BYTES,
   lend,
+  linkedSignal,
   type Source,
-  stopIfAborted,
 } from "./source.js";
 
 export interface RangeReply {
@@ -25,38 +24,19 @@ export type RangeTransport = (
 
 export type OwnedTransport = RangeTransport & { dispose?: () => void };
 
-export interface RangeOptions {
-  /**
-   * How long the source may deliver nothing before the read is refused.
-   *
-   * Unset, a socket that has gone quiet waits until the peek's `signal` cuts it.
-   */
-  stallMs?: number | null;
-  /**
-   * Cuts every request this source makes, beside the signal of the call that makes it.
-   *
-   * @deprecated Pass the peek's own `signal`, which cuts every request that peek makes. Removed in 0.2.0.
-   */
-  signal?: AbortSignal | undefined;
-}
-
 export const bytesRange = (from: number, to: number): string =>
   `bytes=${String(from)}-${String(to)}`;
 
 export function rangeSource(
   url: string,
   transport: OwnedTransport,
-  { stallMs, signal: given }: RangeOptions,
+  stallMs: number | null | undefined,
 ): Source & AsyncDisposal {
   const effectiveStallMs =
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
       ? stallMs
       : null;
-  const signal = givenSignal(given);
-  // A source whose own signal has already fired refuses at the open,
-  // before it asks the server anything.
-  stopIfAborted(signal);
-  const invariants: TransportInvariants = { url, transport, stallMs: effectiveStallMs, signal };
+  const invariants: TransportInvariants = { url, transport, stallMs: effectiveStallMs };
   const { dispose } = transport;
   let headRead: HeadRead | null = null;
   const headFor = async (signal: AbortSignal | undefined): Promise<HeadRead> => {
@@ -106,7 +86,6 @@ interface TransportInvariants {
   url: string;
   transport: RangeTransport;
   stallMs: number | null;
-  signal: AbortSignal | undefined;
 }
 
 interface HeadRead {
@@ -162,7 +141,7 @@ async function readHead(
   invariants: TransportInvariants,
   signal: AbortSignal | undefined,
 ): Promise<HeadRead> {
-  const dog = watchdog(invariants.url, invariants.stallMs, [invariants.signal, signal]);
+  const dog = watchdog(invariants.url, invariants.stallMs, signal);
   try {
     const first = await requestRange(invariants, dog, 0, HEAD_BYTES - 1);
     const into = new Uint8Array(available(0, HEAD_BYTES, first.total));
@@ -183,7 +162,7 @@ async function readOverRanges(
   const out = into ?? new Uint8Array(bounded);
   let written = 0;
   let rounds = 0;
-  const dog = watchdog(invariants.url, invariants.stallMs, [invariants.signal, signal]);
+  const dog = watchdog(invariants.url, invariants.stallMs, signal);
   try {
     while (written < bounded) {
       rounds += 1;
@@ -260,30 +239,22 @@ async function* watched(
   }
 }
 
-function watchdog(
-  url: string,
-  stallMs: number | null,
-  callers: ReadonlyArray<AbortSignal | undefined>,
-): Watchdog {
-  const given = callers.filter((caller) => caller !== undefined);
-  if (stallMs === null && given.length < 2)
-    return { signal: given[0], alive: () => {}, off: () => {} };
-  const controller = new AbortController();
+function watchdog(url: string, stallMs: number | null, caller: AbortSignal | undefined): Watchdog {
+  if (stallMs === null) return { signal: caller, alive: () => {}, off: () => {} };
+  const link = linkedSignal(caller);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const alive = () => {
-    if (stallMs === null) return;
     clearTimeout(timer);
     const stall = () => {
       const silent = new Error(`${url} sent nothing for ${String(stallMs)}ms`);
-      controller.abort(silent);
+      link.abort(silent);
     };
     timer = setTimeout(stall, stallMs);
   };
   alive();
-  const unlink = forwardAbort(given, controller);
   const off = () => {
     clearTimeout(timer);
-    unlink();
+    link.unlink();
   };
-  return { signal: controller.signal, alive, off };
+  return { signal: link.signal, alive, off };
 }

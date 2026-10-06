@@ -1,12 +1,24 @@
 /** URL policy and the fetch transport. */
 
 import type { AsyncDisposal } from "../disposal.js";
-import { bytesRange, type RangeOptions, type RangeTransport, rangeSource } from "./range.js";
+import { bytesRange, type RangeTransport, rangeSource } from "./range.js";
 import type { Source } from "./source.js";
 
-export interface UrlOptions extends RangeOptions {
+export interface UrlOptions {
+  /** Sent with every request, but for Host, Range and Accept-Encoding, which the transport owns. */
   headers?: Readonly<Record<string, string>>;
+  /**
+   * The client every request goes through, for a host that needs HTTP/2, a proxy or a pinned certificate.
+   *
+   * It is handed the URL as the string given.
+   */
   fetch?: typeof globalThis.fetch;
+  /**
+   * How long the source may deliver nothing before the read is refused.
+   *
+   * Unset, a socket that has gone quiet waits until the peek's `signal` cuts it.
+   */
+  stallMs?: number | null;
 }
 
 export const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set([
@@ -40,7 +52,7 @@ export async function urlSource(
   options: UrlOptions = {},
 ): Promise<Source & AsyncDisposal> {
   const transport = fetchTransport(url, options);
-  return rangeSource(url, transport, options);
+  return rangeSource(url, transport, options.stallMs);
 }
 
 export function isHttpUrl(target: string): boolean {

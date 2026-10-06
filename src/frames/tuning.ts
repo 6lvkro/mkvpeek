@@ -1,6 +1,6 @@
-import type { IndexFetch, Trip, WalkFetch } from "../io/source.js";
-import { givenSignal, MAX_SPAN_BYTES } from "../io/source.js";
-import type { FetchKnobs, FrameOptions, FramePreset, FrameProgress, FrameVia } from "./contract.js";
+import type { FetchKnobs, IndexFetch, Trip, WalkFetch } from "../io/source.js";
+import { givenSignal } from "../io/source.js";
+import type { FrameOptions, FramePreset, FrameProgress, FrameVia } from "./contract.js";
 
 export interface SettledFrameOptions {
   via: FrameVia;
@@ -16,21 +16,22 @@ export function settledFrameOptions(
   trip: Trip | undefined,
 ): SettledFrameOptions {
   const via = options.via ?? DEFAULT_VIA;
-  const strict = options.strict === true;
-  const presetAsked = options.preset ?? DEFAULT_PRESET;
-  const preset = Object.hasOwn(TUNING, presetAsked) ? presetAsked : DEFAULT_PRESET;
+  if (!FRAME_VIAS.has(via)) throw new TypeError(`unknown via ${String(via)}`);
+  const strict = options.strict ?? false;
+  if (typeof strict !== "boolean") throw new TypeError(`strict ${String(strict)} is not a boolean`);
+  const preset = options.preset ?? DEFAULT_PRESET;
+  if (!Object.hasOwn(TUNING, preset)) throw new TypeError(`unknown preset ${String(preset)}`);
   const column = trip !== undefined && Object.hasOwn(TUNING[preset], trip) ? trip : "mount";
   const shipped = TUNING[preset][column];
-  const given = options.overrides ?? {};
-  const knob = (key: keyof FetchKnobs, fallback: number) => clampedKnob(given[key], fallback, key);
+  const { concurrency } = options;
   const knobsForIndex = {
-    gapBytes: knob("gapBytes", shipped.gapBytes),
-    cueAheadBytes: knob("cueAheadBytes", shipped.cueAheadBytes),
-    concurrency: knob("concurrency", INDEX_CONCURRENCY),
+    gapBytes: shipped.gapBytes,
+    cueAheadBytes: shipped.cueAheadBytes,
+    concurrency: checkedConcurrency(concurrency, INDEX_CONCURRENCY),
   };
   const knobsForWalk = {
-    blockAheadBytes: knob("blockAheadBytes", shipped.blockAheadBytes),
-    concurrency: knob("concurrency", shipped.concurrency),
+    blockAheadBytes: shipped.blockAheadBytes,
+    concurrency: checkedConcurrency(concurrency, shipped.concurrency),
   };
   const { onProgress } = options;
   const signal = givenSignal(options.signal);
@@ -40,6 +41,8 @@ export function settledFrameOptions(
 type TuningByTrip = Record<Trip, Readonly<FetchKnobs>>;
 
 const DEFAULT_VIA: FrameVia = "both";
+
+const FRAME_VIAS = new Set<FrameVia>(["both", "index", "walk"]);
 
 const DEFAULT_PRESET: FramePreset = "balanced";
 
@@ -83,27 +86,12 @@ const TUNING: Record<FramePreset, TuningByTrip> = {
   },
 };
 
-const KNOB_MIN: FetchKnobs = {
-  gapBytes: 0,
-  cueAheadBytes: 16,
-  blockAheadBytes: 0,
-  concurrency: 1,
-};
+const MAX_CONCURRENCY = 64;
 
-const KNOB_MAX: FetchKnobs = {
-  gapBytes: Number.POSITIVE_INFINITY,
-  cueAheadBytes: MAX_SPAN_BYTES / 4,
-  blockAheadBytes: MAX_SPAN_BYTES,
-  concurrency: 64,
-};
-
-/**
- * A read length, so it has to be an integer.
- *
- * Anything else, or below the minimum, falls back to the shipped value;
- * above the maximum sits at the maximum.
- */
-const clampedKnob = (given: number | undefined, shipped: number, key: keyof FetchKnobs): number =>
-  given !== undefined && Number.isInteger(given) && given >= KNOB_MIN[key]
-    ? Math.min(given, KNOB_MAX[key])
-    : shipped;
+function checkedConcurrency(given: number | undefined, shipped: number): number {
+  const concurrency = given ?? shipped;
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new RangeError(`concurrency ${String(concurrency)} is not an integer of at least 1`);
+  }
+  return Math.min(concurrency, MAX_CONCURRENCY);
+}

@@ -10,20 +10,18 @@ import type { Undo } from "./encoding.js";
  */
 export type BytesSupply = (at: number, need: number) => Promise<Window>;
 
+/** How a chosen track's frames are undone. */
 export interface FrameClaim {
   undo: Undo | null;
 }
 
-/** A block's frame, under the claim its track was read by. */
-export interface ClaimedFrame<C extends FrameClaim = FrameClaim> {
-  claim: C;
+/** A block's frame, under the TrackNumber its head states. */
+export interface BlockFrame {
+  trackNumber: number;
   startTicks: number;
   durationTicks: number | null;
   payload: Uint8Array;
 }
-
-/** The claim a block's TrackNumber is read under, or null for a track nobody chose. */
-export type ClaimOf<C extends FrameClaim> = (trackNumber: number) => C | null;
 
 interface BlockHead {
   trackNumber: number;
@@ -59,17 +57,17 @@ export type BlockClause = (typeof BLOCK_REFUSAL)[keyof typeof BLOCK_REFUSAL];
 export const BLOCK_PROBE_BYTES = 32;
 
 /**
- * One block element as a frame.
+ * One block element as a frame, or null for a track `claims` does not hold.
  *
- * An unclaimed track is null, and a rule that stands is its clause.
+ * A block that breaks a rule answers that rule's clause.
  */
-export async function frameIn<C extends FrameClaim>(
+export async function frameIn(
   outer: Element,
   clusterTicks: number,
   held: Window,
-  claimOf: ClaimOf<C>,
+  claims: ReadonlyMap<number, FrameClaim>,
   supply: BytesSupply,
-): Promise<ClaimedFrame<C> | null | BlockClause> {
+): Promise<BlockFrame | null | BlockClause> {
   let window = held;
   let body = outer.body;
   let size = outer.size;
@@ -107,8 +105,9 @@ export async function frameIn<C extends FrameClaim>(
   }
   const blockHead = readBlockHead(window, body, size);
   if (typeof blockHead === "string") return blockHead;
-  const claim = claimOf(blockHead.trackNumber);
-  if (claim === null) return null;
+  const { trackNumber } = blockHead;
+  const claim = claims.get(trackNumber);
+  if (claim === undefined) return null;
   const fault = blockFault(blockHead);
   if (fault !== null) return fault;
   const covering = E.covers(window, blockHead.payloadAt, blockHead.payloadSize)
@@ -122,7 +121,7 @@ export async function frameIn<C extends FrameClaim>(
     return BLOCK_REFUSAL.undecodable;
   }
   const startTicks = clusterTicks + blockHead.relTicks;
-  return { claim, startTicks, durationTicks, payload };
+  return { trackNumber, startTicks, durationTicks, payload };
 }
 
 export function heldBlockHead(window: Window, outer: Element): BlockHead | null {

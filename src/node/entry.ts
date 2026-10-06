@@ -4,9 +4,8 @@
  * The examples for URLs and bytes are in the browser entry's docs, under the same names.
  */
 
-import type { Container, PeekOptions, PeekOutcome } from "../container/contract.js";
-import { type Platform, peekWith } from "../container/listing.js";
-import { openWith } from "../container/open.js";
+import type { Container, Listing } from "../container/contract.js";
+import { openWith, type Platform, peekWith } from "../container/open.js";
 import { type Target, urlRefusal } from "../container/target.js";
 import { isHttpUrl, namesAuthority } from "../io/http.js";
 import type { Source } from "../io/source.js";
@@ -18,15 +17,13 @@ import { inflateByZlib } from "./inflate.js";
 /**
  * Peeks at a container's track list.
  *
- * It reads only the header, and answers every type of track in one array.
+ * It reads only the header, answers every type of track in one array,
+ * and throws a refusal as a `RefusalError`, as `openContainer` does.
  *
  * @example
- * const { tracks, info, attachments } = await peekTracks(path, {
- *   info: true,
- *   attachments: true,
- * });
+ * const { tracks, info } = await peekTracks(path);
  */
-export function peekTracks(target: Target, options?: PeekOptions): Promise<PeekOutcome> {
+export function peekTracks(target: Target, options?: Abortable): Promise<Listing> {
   return peekWith(PLATFORM, target, options);
 }
 

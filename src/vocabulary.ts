@@ -51,6 +51,8 @@ export interface TrackTag {
  * - `invalid-target`: the input itself cannot be opened; fix the call.
  *
  * - `cancelled`: the caller's signal fired, or the container was closed.
+ *
+ * The list can grow, so a branch on codes should leave room for one that does not exist yet.
  */
 export type RefusalCode =
   | "not-matroska"
@@ -59,14 +61,6 @@ export type RefusalCode =
   | "source-failed"
   | "invalid-target"
   | "cancelled";
-
-/**
- * Completion is the one code `served`.
- *
- * The refusal side can grow,
- * so a branch on codes should leave room for a code that does not exist yet.
- */
-export type PeekCode = "served" | RefusalCode;
 
 export interface Abortable {
   /**
@@ -80,7 +74,7 @@ export interface Abortable {
   signal?: AbortSignal;
 }
 
-/** A refusal an open, a read of frames or `attachments` throws, carrying the code `peekTracks` answers with. */
+/** A refusal a peek, an open, a read of frames or `attachments` throws. */
 export class RefusalError extends Error {
   readonly code: RefusalCode;
 
@@ -92,33 +86,25 @@ export class RefusalError extends Error {
 }
 
 /**
- * Whether the outcome is a refusal rather than a serve.
- *
- * @example
- * const { code } = await peekTracks(path);
- * if (isRefusalCode(code)) throw new Error(code);
- */
-export const isRefusalCode = (code: PeekCode): code is RefusalCode => Object.hasOwn(REFUSALS, code);
-
-/**
  * Whether a file this reader refused is worth handing to another tool, ffmpeg say.
  *
  * Yes for a refusal that read the container; no where the bytes did not arrive or the call was wrong.
  *
  * @example
- * const { code, tracks } = await peekTracks(path);
- * if (!isRefusalCode(code)) return tracks;
- * if (worthFallback(code)) return demux(path);
- * throw new Error(code);
+ * try {
+ *   return (await peekTracks(path)).tracks;
+ * } catch (error) {
+ *   if (error instanceof RefusalError && worthFallback(error.code)) return demux(path);
+ *   throw error;
+ * }
  */
-export const worthFallback = (code: PeekCode): boolean =>
-  isRefusalCode(code) && REFUSALS[code].worthFallback;
+export const worthFallback = (code: RefusalCode): boolean => WORTH_FALLBACK[code] === true;
 
-const REFUSALS = {
-  "not-matroska": { worthFallback: true },
-  malformed: { worthFallback: true },
-  unreadable: { worthFallback: true },
-  "source-failed": { worthFallback: false },
-  "invalid-target": { worthFallback: false },
-  cancelled: { worthFallback: false },
-} as const satisfies Record<RefusalCode, { worthFallback: boolean }>;
+const WORTH_FALLBACK: Readonly<Record<RefusalCode, boolean>> = {
+  "not-matroska": true,
+  malformed: true,
+  unreadable: true,
+  "source-failed": false,
+  "invalid-target": false,
+  cancelled: false,
+};

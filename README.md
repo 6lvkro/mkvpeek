@@ -37,14 +37,13 @@ Node 22.1 or later, no other dependencies.
 
 There are two entry points: `peekTracks` and `openContainer`.
 
-`peekTracks` reads only the header and returns every kind of track in `tracks`, and `info` and `attachments` when asked for. It answers a refusal with a `code` instead of throwing.
+`peekTracks` reads only the header and returns every kind of track in `tracks`, with the container's `info`. It throws a refusal as a `RefusalError`, as `openContainer` does.
 
 ```ts
 import { peekTracks } from "mkvpeek";
 
 // A file path (Node only), a URL whose server allows Range requests, or bytes
-const { code, tracks, info } = await peekTracks("video.mkv", { info: true });
-// code is "served" unless refused
+const { tracks, info } = await peekTracks("video.mkv");
 ```
 
 `openContainer` reads the same header and keeps the file open, so the frames of the tracks you pick are read in one plan, and the attachments when you ask for them.

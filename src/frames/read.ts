@@ -32,9 +32,12 @@ export async function* framesOf(
     if (via !== "walk") {
       const watch = watching("index");
       const indexed = await framesByIndex(file, claims, knobsForIndex, watch, strict).catch(
-        asRefusal,
+        (error: unknown) => {
+          if (via === "index") throw error;
+          return null;
+        },
       );
-      if (typeof indexed !== "string") {
+      if (indexed !== null) {
         for (const frame of indexed) {
           stopIfAborted(signal);
           yield frame;
@@ -42,7 +45,6 @@ export async function* framesOf(
         stopIfAborted(signal);
         return;
       }
-      if (via === "index") throw new RefusalError(indexed);
     }
     const watch = watching("walk");
     for await (const frame of framesByWalk(file, claims, knobsForWalk, watch)) {

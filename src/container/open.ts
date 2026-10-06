@@ -4,9 +4,9 @@ import type { Frame, FrameOptions } from "../frames/contract.js";
 import { framesOf } from "../frames/read.js";
 import { settledFrameOptions } from "../frames/tuning.js";
 import {
-  forwardAbort,
   givenSignal,
   type Inflate,
+  type Link,
   linkedSignal,
   type Source,
   stopIfAborted,
@@ -14,6 +14,7 @@ import {
 } from "../io/source.js";
 import {
   type OpenedSegment,
+  openSegment,
   readAttachments,
   readCues,
   readFirstClusterTicks,
@@ -28,9 +29,14 @@ import {
   type ContainerInfo,
   RefusalError,
 } from "../vocabulary.js";
-import type { Container } from "./contract.js";
-import { type Platform, segmentOf } from "./listing.js";
-import { leaseOf, type Target, type TargetLease } from "./target.js";
+import type { Container, Listing } from "./contract.js";
+import { leaseOf, type Opener, type Target, type TargetLease } from "./target.js";
+
+/** What the Node and browser entries do differently. */
+export interface Platform {
+  open: Opener;
+  inflate: Inflate;
+}
 
 export async function openWith(
   platform: Platform,
@@ -47,11 +53,22 @@ export async function openWith(
   }
 }
 
+export async function peekWith(
+  platform: Platform,
+  target: Target,
+  options: Abortable = {},
+): Promise<Listing> {
+  const container = await openWith(platform, target, options);
+  const { tracks, info } = container;
+  await container.close();
+  return { tracks, info };
+}
+
 type PartRead<T> = (signal: AbortSignal) => Promise<T>;
 
 interface SharedRead<T> {
   answer: Promise<T>;
-  stop: AbortController;
+  stop: Link;
   waiters: number;
 }
 
@@ -123,7 +140,8 @@ async function leased(
   signal: AbortSignal | undefined,
 ): Promise<Container> {
   try {
-    const opened = await segmentOf(lease.source, inflate, signal);
+    const opened = await openSegment(lease.source, signal, inflate);
+    if (typeof opened === "string") throw new RefusalError(opened);
     const info = await readInfo(opened, signal);
     stopIfAborted(signal);
     return new LeasedContainer(lease, opened, info, inflate);
@@ -154,13 +172,12 @@ function sharedAndKept<T>(read: PartRead<T>, closing: AbortSignal): PartRead<T> 
   let kept: { value: T } | null = null;
   let shared: SharedRead<T> | null = null;
   const start = (): SharedRead<T> => {
-    const stop = new AbortController();
-    const unlink = forwardAbort([closing], stop);
+    const stop = linkedSignal(closing);
     const answer = read(stop.signal);
     answer.then((value) => {
       kept = { value };
-      unlink();
-    }, unlink);
+      stop.unlink();
+    }, stop.unlink);
     return { answer, stop, waiters: 0 };
   };
   return async (signal) => {

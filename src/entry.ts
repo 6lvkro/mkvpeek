@@ -1,6 +1,5 @@
-import type { Container, PeekOptions, PeekOutcome } from "./container/contract.js";
-import { type Platform, peekWith } from "./container/listing.js";
-import { openWith } from "./container/open.js";
+import type { Container, Listing } from "./container/contract.js";
+import { openWith, type Platform, peekWith } from "./container/open.js";
 import { type Target, viaUrl } from "./container/target.js";
 import { inflateByStream } from "./io/inflate.js";
 import type { Abortable } from "./vocabulary.js";
@@ -8,7 +7,8 @@ import type { Abortable } from "./vocabulary.js";
 /**
  * Peeks at a container's track list.
  *
- * It reads only the header, and answers every type of track in one array.
+ * It reads only the header, answers every type of track in one array,
+ * and throws a refusal as a `RefusalError`, as `openContainer` does.
  *
  * @example
  * // A URL, when the server allows Range requests
@@ -17,13 +17,13 @@ import type { Abortable } from "./vocabulary.js";
  *
  * @example
  * // Bytes already in memory (an upload body, a queue message)
- * const { code, tracks } = await peekTracks(bytes);
+ * const { tracks } = await peekTracks(bytes);
  *
  * @example
  * // Options the package cannot predefine: open the source yourself, and close what you opened.
  * const source = await urlSource(url, { headers });
  * try {
- *   const { code, tracks } = await peekTracks(source);
+ *   const { tracks } = await peekTracks(source);
  * } finally {
  *   await source.close?.();
  * }
@@ -34,9 +34,9 @@ import type { Abortable } from "./vocabulary.js";
  *   size: () => Promise.resolve(file.size),
  *   read: async (at, n) => new Uint8Array(await file.slice(at, at + n).arrayBuffer()),
  * };
- * const { code, tracks } = await peekTracks(source);
+ * const { tracks } = await peekTracks(source);
  */
-export function peekTracks(target: Target, options?: PeekOptions): Promise<PeekOutcome> {
+export function peekTracks(target: Target, options?: Abortable): Promise<Listing> {
   return peekWith(PLATFORM, target, options);
 }
 

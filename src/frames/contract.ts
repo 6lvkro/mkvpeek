@@ -1,4 +1,3 @@
-import type { IndexFetch, WalkFetch } from "../io/source.js";
 import type { Abortable } from "../vocabulary.js";
 
 /** Its times are on the file's timeline. */
@@ -11,12 +10,18 @@ export interface Frame {
   data: Uint8Array;
 }
 
-export type FetchKnobs = IndexFetch & WalkFetch;
-
 /** What a caller can say about the cost of a read. */
 export interface FrameTuning {
   preset?: FramePreset;
-  overrides?: Partial<FetchKnobs>;
+  /**
+   * Concurrent range requests on the index path, and lanes on the walk.
+   *
+   * An integer of at least 1, or the call throws a RangeError, and past 64 it is read as 64.
+   *
+   * WARN: on a network path this is the number of open connections,
+   * so **mind the target server's socket limit.**
+   */
+  concurrency?: number;
 }
 
 /**
@@ -42,7 +47,11 @@ export type FrameFinder = "index" | "walk";
  */
 export type FrameVia = "both" | FrameFinder;
 
-/** The options are read once, when `frames` is called. */
+/**
+ * The options are read once, when `frames` is called.
+ *
+ * An unknown `via` or `preset`, or a `strict` that is not a boolean, throws a TypeError there.
+ */
 export interface FrameOptions extends FrameTuning, Abortable {
   via?: FrameVia;
   /**

@@ -14,13 +14,13 @@ export async function* framesByWalk(
 ): AsyncGenerator<Frame> {
   const firstClusterTicks = await file.firstClusterTicks(watch.signal);
   const timeline = timelineOf(file, firstClusterTicks);
-  if (typeof timeline === "string") throw new RefusalError(timeline);
   const byNumber = new Map(claims.map((claim) => [claim.entry.number, claim] as const));
   const seen = new Set<TrackClaim>();
   for await (const clusterFrames of walkFrames(file, byNumber, knobs, watch)) {
     for (const frame of clusterFrames) {
-      seen.add(frame.claim);
-      yield frameOn(frame, timeline);
+      const claim = byNumber.get(frame.trackNumber) as TrackClaim;
+      seen.add(claim);
+      yield frameOn(frame, claim.entry.index, timeline);
     }
   }
   const unfound = claims.filter((claim) => !seen.has(claim));

@@ -10,7 +10,6 @@ export type {
   Attachment,
   Container,
   ContainerInfo,
-  FetchKnobs,
   Frame,
   FrameFinder,
   FrameOptions,
@@ -18,9 +17,7 @@ export type {
   FrameProgress,
   FrameTuning,
   FrameVia,
-  PeekCode,
-  PeekOptions,
-  PeekOutcome,
+  Listing,
   RefusalCode,
   Source,
   SubtitleFile,
@@ -33,7 +30,6 @@ export type {
   UrlOptions,
 } from "../index.js";
 export {
-  isRefusalCode,
   RefusalError,
   subtitleFile,
   subtitleFiles,

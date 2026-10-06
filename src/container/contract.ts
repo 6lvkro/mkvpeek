@@ -1,20 +1,12 @@
 import type { AsyncDisposal } from "../disposal.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
-import type { Abortable, Attachment, ContainerInfo, PeekCode } from "../vocabulary.js";
+import type { Abortable, Attachment, ContainerInfo } from "../vocabulary.js";
 
-export interface PeekOptions extends Abortable {
-  info?: boolean;
-  attachments?: boolean;
-}
-
-/** A peek's answer, which carries a refusal rather than throwing it. */
-export interface PeekOutcome<T extends Track = Track> {
-  /** Empty on a refusal. */
-  tracks: T[];
-  info?: ContainerInfo | null;
-  attachments?: Attachment[];
-  code: PeekCode;
+/** What a container lists: every track it states, and its Info. */
+export interface Listing {
+  tracks: Track[];
+  info: ContainerInfo;
 }
 
 /**

@@ -32,7 +32,7 @@ export async function urlSource(
 ): Promise<Source & AsyncDisposal> {
   if (options.fetch !== undefined) return viaFetch(url, options);
   const transport = nodeTransport(url, options);
-  return rangeSource(url, transport, options);
+  return rangeSource(url, transport, options.stallMs);
 }
 
 const MAX_SOCKETS = 64;

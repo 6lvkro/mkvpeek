@@ -9,7 +9,6 @@ import {
   type Watch,
 } from "../io/source.js";
 import { coalesceAcross, fetchRanges, fetchSpans, WindowIndex } from "../io/windows.js";
-import type { ClaimedFrame } from "../matroska/block.js";
 import { CLUSTER_PROBE_BYTES } from "../matroska/chain.js";
 import {
   agreesWithCluster,
@@ -24,10 +23,10 @@ import {
   readFrame,
 } from "../matroska/cues.js";
 import type { CueIndex, CuePosition, TrackEntry } from "../matroska/header.js";
-import type { RefusalCode } from "../vocabulary.js";
+import { RefusalError } from "../vocabulary.js";
 import { claimFor, type FrameFile, type TrackClaim, vouchable } from "./claim.js";
 import type { Frame } from "./contract.js";
-import { frameOn, timelineOf } from "./timeline.js";
+import { frameOn, type Timeline, timelineOf } from "./timeline.js";
 
 /** Hands over no frame until every chosen track's frames are read. */
 export async function framesByIndex(
@@ -36,16 +35,14 @@ export async function framesByIndex(
   knobs: IndexFetch,
   watch: Watch,
   strict: boolean,
-): Promise<Frame[] | RefusalCode> {
+): Promise<Frame[]> {
   const parts = [
     () => file.firstClusterTicks(watch.signal),
     () => file.cues(watch.signal),
   ] as const;
   const [firstClusterTicks, cues] = await gathered(parts, knobs.concurrency, watch.signal);
   const timeline = timelineOf(file, firstClusterTicks);
-  if (typeof timeline === "string") return timeline;
   const plan = planFrames(cues, claims, strict);
-  if (!Array.isArray(plan)) return plan;
   const { head } = file;
   const headBytes = head.bytes.length;
   const stones = stonesOf(file, cues, claims, knobs.cueAheadBytes);
@@ -75,11 +72,10 @@ export async function framesByIndex(
     knobs,
     head,
     strict,
+    timeline,
   };
   const progressBytes = { headBytes, totalBytes };
-  const claimed = await collectByRound(invariants, rounds, progressBytes, watch);
-  if (!Array.isArray(claimed)) return claimed;
-  return claimed.map((frame) => frameOn(frame, timeline));
+  return collectByRound(invariants, rounds, progressBytes, watch);
 }
 
 interface PlannedCue {
@@ -100,6 +96,7 @@ interface RoundInvariants {
   knobs: IndexFetch;
   head: Window;
   strict: boolean;
+  timeline: Timeline;
 }
 
 interface TimedRun {
@@ -126,16 +123,15 @@ function planFrames(
   byTrack: CueIndex,
   claims: readonly TrackClaim[],
   strict: boolean,
-): PlannedCue[] | RefusalCode {
+): PlannedCue[] {
   const planned: PlannedCue[] = [];
   for (const claim of claims) {
     const cues = byTrack.get(claim.entry.number) ?? [];
-    // Each cue reads one frame or refuses the read.
     if (!vouchable(claim, cues.length, strict)) {
-      return "unreadable";
+      throw new RefusalError("unreadable");
     }
     if (repeatedPosition(cues)) {
-      return "unreadable";
+      throw new RefusalError("unreadable");
     }
     for (const cue of cues) planned.push({ claim, cue });
   }
@@ -190,20 +186,19 @@ async function collectByRound(
   rounds: readonly PlannedRound[],
   { headBytes, totalBytes }: { headBytes: number; totalBytes: number },
   { onProgress, signal }: Watch,
-): Promise<ClaimedFrame<TrackClaim>[] | RefusalCode> {
-  const claimed: ClaimedFrame<TrackClaim>[] = [];
+): Promise<Frame[]> {
+  const frames: Frame[] = [];
   let doneBytes = headBytes;
   for (const round of rounds) {
     stopIfAborted(signal);
     const { windows, timed } = await fetchRound(invariants, round, signal);
-    const roundFrames = await readRound(windows, round.slice, timed);
-    if (!Array.isArray(roundFrames)) return roundFrames;
-    claimed.push(...roundFrames);
+    const roundFrames = await readRound(windows, round.slice, timed, invariants.timeline);
+    frames.push(...roundFrames);
     doneBytes += round.bytes;
     onProgress(doneBytes, totalBytes);
   }
   stopIfAborted(signal);
-  return claimed;
+  return frames;
 }
 
 /**
@@ -358,19 +353,20 @@ async function readRound(
   windows: WindowIndex,
   slice: readonly PlannedCue[],
   timed: ReadonlyMap<PlannedCue, CuedBlock>,
-): Promise<ClaimedFrame<TrackClaim>[] | RefusalCode> {
-  const claimed: ClaimedFrame<TrackClaim>[] = [];
+  timeline: Timeline,
+): Promise<Frame[]> {
+  const frames: Frame[] = [];
   const memo: ClusterMemo = { last: null };
   for (const planned of slice) {
     const { claim, cue } = planned;
-    const { number } = claim.entry;
+    const { number, index } = claim.entry;
     const cued = timed.get(planned);
     const frame =
       cued === undefined
         ? await readFrame(windows, cue, number, claim, memo)
         : await readCuedFrame(windows, cued, number, claim);
-    if (typeof frame === "string") return "unreadable";
-    claimed.push(frame);
+    if (typeof frame === "string") throw new RefusalError("unreadable");
+    frames.push(frameOn(frame, index, timeline));
   }
-  return claimed;
+  return frames;
 }

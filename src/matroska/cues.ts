@@ -5,9 +5,8 @@ import type { WindowIndex } from "../io/windows.js";
 import {
   BLOCK_REFUSAL,
   type BlockClause,
+  type BlockFrame,
   type BytesSupply,
-  type ClaimedFrame,
-  type ClaimOf,
   type FrameClaim,
   frameIn,
   heldBlockHead,
@@ -50,13 +49,13 @@ interface LastCluster {
   window: Window;
 }
 
-export async function readFrame<C extends FrameClaim>(
+export async function readFrame(
   windows: WindowIndex,
   point: CuePosition,
   trackNumber: number,
-  claim: C,
+  claim: FrameClaim,
   memo: ClusterMemo = { last: null },
-): Promise<ClaimedFrame<C> | BlockClause> {
+): Promise<BlockFrame | BlockClause> {
   const pointed = locateBlock(windows, point, memo);
   if (typeof pointed === "string") return pointed;
   const { clusterTicks, window, outer } = pointed;
@@ -66,12 +65,12 @@ export async function readFrame<C extends FrameClaim>(
   return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, claim);
 }
 
-export function readCuedFrame<C extends FrameClaim>(
+export function readCuedFrame(
   windows: WindowIndex,
   cued: CuedBlock,
   trackNumber: number,
-  claim: C,
-): Promise<ClaimedFrame<C> | BlockClause> {
+  claim: FrameClaim,
+): Promise<BlockFrame | BlockClause> {
   const { outer, clusterTicks, window } = cued;
   return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, claim);
 }
@@ -167,23 +166,23 @@ const unheldBlock = (windows: WindowIndex, blockAt: number, outer: Element): Ran
     ? { at: blockAt, length: outer.next - blockAt }
     : null;
 
-async function frameOfBlock<C extends FrameClaim>(
+async function frameOfBlock(
   windows: WindowIndex,
   outer: Element,
   clusterTicks: number,
   held: Window,
   trackNumber: number,
-  claim: C,
-): Promise<ClaimedFrame<C> | BlockClause> {
-  const claimOf: ClaimOf<C> = (number) => (number === trackNumber ? claim : null);
+  claim: FrameClaim,
+): Promise<BlockFrame | BlockClause> {
+  const claims = new Map([[trackNumber, claim]]);
   const supply: BytesSupply = (at, need) => {
     const window = windows.find(at, need);
     if (window === null) throw new E.GrammarError();
     return Promise.resolve(window);
   };
   try {
-    const claimed = await frameIn(outer, clusterTicks, held, claimOf, supply);
-    return claimed ?? BLOCK_REFUSAL.notThisTrack;
+    const frame = await frameIn(outer, clusterTicks, held, claims, supply);
+    return frame ?? BLOCK_REFUSAL.notThisTrack;
   } catch (error) {
     if (!E.isGrammarError(error)) throw error;
     return BLOCK_REFUSAL.notFetched;
