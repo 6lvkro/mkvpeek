@@ -21,7 +21,6 @@ import {
   type TrackEntry,
 } from "../matroska/header.js";
 import { refusalOf } from "../refusal.js";
-import { subtitleWitnessOf } from "../subtitle/witness.js";
 import { allTracks, type Track, trackOf } from "../tracks.js";
 import {
   type Abortable,
@@ -193,7 +192,7 @@ function fileOf(
     closing,
   );
   const cues = sharedAndKept((signal) => readCues(opened, signal), closing);
-  return { ...opened, info, inflate, witnessOf: subtitleWitnessOf, firstClusterTicks, cues };
+  return { ...opened, info, inflate, firstClusterTicks, cues };
 }
 
 function entriesOf(file: FrameFile, tracks: readonly Track[]): TrackEntry[] {

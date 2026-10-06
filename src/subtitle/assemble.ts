@@ -1,7 +1,6 @@
 import type { Frame } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
 import type { SubtitleFile } from "./contract.js";
-import { SUBSTATION_CODECS } from "./substation.js";
 
 /** A track's own frames as the file ffmpeg's -c:s copy writes, or null for a codec it does not write. */
 export function assemble(track: Track, frames: readonly Frame[]): SubtitleFile | null {
@@ -59,7 +58,9 @@ const LONG_MAX = 2n ** 63n - 1n;
 const LONG_MIN = -(2n ** 63n);
 
 const ASSEMBLERS: ReadonlyMap<string, Assembler> = new Map<string, Assembler>([
-  ...[...SUBSTATION_CODECS].map((codec) => [codec, assembleSubstation] as const),
+  ...["S_TEXT/ASS", "S_TEXT/SSA", "S_SSA", "S_ASS"].map(
+    (codec) => [codec, assembleSubstation] as const,
+  ),
   ["S_TEXT/UTF8", assembleSrt],
   ["D_WEBVTT/SUBTITLES", assembleVtt],
   ["D_WEBVTT/CAPTIONS", assembleVtt],

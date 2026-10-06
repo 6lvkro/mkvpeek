@@ -113,8 +113,8 @@ In the browser, `mkvpeek/browser` is the same reader minus file paths.
 Frames are, for now, the subtitle tracks' alone. Where a track's frames are stored encoded, it undoes `zlib` and `header stripping`, and refuses a read of any other encoding, or of another kind of track, before it fetches a frame.
 
 Matroska containers usually carry `Cues`, a list of frame positions, but the list can be short or wrong.
-So that a frame the caller asked for is not silently lost when the list falls short,
-the default is to back off the fast path (`index`) and retry along the slow path (`walk`), which visits every cluster.
+By default the fast path (`index`) trusts the list unless the file contradicts it, and then backs off to the slow path (`walk`), which visits every cluster.
+A short list on a track that states no frame count can go unnoticed; `strict: true` trusts only what the file proves, at the cost of more reads.
 Only the slow path streams its frames; the fast path vouches for all of them before handing any over.
 
 Even with `walk`, this handles fewer containers than the external tools, so where one is available, read by `index` explicitly and hand refused files to that tool; where `index` works, it is well ahead of the binaries in both speed and transfer.
@@ -157,7 +157,8 @@ Expected output is verified against ffprobe and ffmpeg, and the deliberate excep
 - **When a file's media does not start where its first cluster does**
   every timestamp differs from ffmpeg's by that gap.
 
-If something the spec defines is distorted or lost in a non-refused return, outside these four, it can be treated as a bug.
+If something the spec defines is distorted or lost in a non-refused return, outside these four and what a short `Cues` list hides from the default, it can be treated as a bug.
+Under `strict`, only these four remain.
 
 ## License
 

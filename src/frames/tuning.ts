@@ -4,6 +4,7 @@ import type { FetchKnobs, FrameOptions, FramePreset, FrameProgress, FrameVia } f
 
 export interface SettledFrameOptions {
   via: FrameVia;
+  strict: boolean;
   knobsForIndex: IndexFetch;
   knobsForWalk: WalkFetch;
   onProgress: ((progress: FrameProgress) => void) | undefined;
@@ -15,6 +16,7 @@ export function settledFrameOptions(
   trip: Trip | undefined,
 ): SettledFrameOptions {
   const via = options.via ?? DEFAULT_VIA;
+  const strict = options.strict === true;
   const presetAsked = options.preset ?? DEFAULT_PRESET;
   const preset = Object.hasOwn(TUNING, presetAsked) ? presetAsked : DEFAULT_PRESET;
   const column = trip !== undefined && Object.hasOwn(TUNING[preset], trip) ? trip : "mount";
@@ -32,7 +34,7 @@ export function settledFrameOptions(
   };
   const { onProgress } = options;
   const signal = givenSignal(options.signal);
-  return { via, knobsForIndex, knobsForWalk, onProgress, signal };
+  return { via, strict, knobsForIndex, knobsForWalk, onProgress, signal };
 }
 
 type TuningByTrip = Record<Trip, Readonly<FetchKnobs>>;

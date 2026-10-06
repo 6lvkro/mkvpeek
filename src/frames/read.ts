@@ -11,7 +11,14 @@ import { framesByWalk } from "./walked.js";
 export async function* framesOf(
   file: FrameFile,
   entries: readonly TrackEntry[],
-  { via, knobsForIndex, knobsForWalk, onProgress, signal: callerSignal }: SettledFrameOptions,
+  {
+    via,
+    strict,
+    knobsForIndex,
+    knobsForWalk,
+    onProgress,
+    signal: callerSignal,
+  }: SettledFrameOptions,
   closing: AbortSignal,
 ): AsyncGenerator<Frame> {
   const { signal, unlink } = linkedSignal(callerSignal, closing);
@@ -24,7 +31,9 @@ export async function* framesOf(
     const claims = claimsOf(file, entries);
     if (via !== "walk") {
       const watch = watching("index");
-      const indexed = await framesByIndex(file, claims, knobsForIndex, watch).catch(asRefusal);
+      const indexed = await framesByIndex(file, claims, knobsForIndex, watch, strict).catch(
+        asRefusal,
+      );
       if (typeof indexed !== "string") {
         for (const frame of indexed) {
           stopIfAborted(signal);

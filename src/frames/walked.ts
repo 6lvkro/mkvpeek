@@ -1,11 +1,11 @@
 import type { WalkFetch, Watch } from "../io/source.js";
 import { walkFrames } from "../matroska/clusters.js";
 import { RefusalError } from "../vocabulary.js";
-import { type FrameFile, type TrackClaim, vouched } from "./claim.js";
+import type { FrameFile, TrackClaim } from "./claim.js";
 import type { Frame } from "./contract.js";
 import { frameOn, timelineOf } from "./timeline.js";
 
-/** A track the walk found no frame of is refused after the walk, unless it states it has none. */
+/** A track the walk found no frame of is refused after the walk where it states it has some. */
 export async function* framesByWalk(
   file: FrameFile,
   claims: readonly TrackClaim[],
@@ -24,5 +24,7 @@ export async function* framesByWalk(
     }
   }
   const unfound = claims.filter((claim) => !seen.has(claim));
-  if (!unfound.every((claim) => vouched(claim, []))) throw new RefusalError("unreadable");
+  if (unfound.some(({ statedFrames }) => statedFrames !== null && statedFrames !== 0)) {
+    throw new RefusalError("unreadable");
+  }
 }

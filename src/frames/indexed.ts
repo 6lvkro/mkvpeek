@@ -25,16 +25,17 @@ import {
 } from "../matroska/cues.js";
 import type { CueIndex, CuePosition, TrackEntry } from "../matroska/header.js";
 import type { RefusalCode } from "../vocabulary.js";
-import { claimFor, type FrameFile, type TrackClaim, vouchable, vouched } from "./claim.js";
+import { claimFor, type FrameFile, type TrackClaim, vouchable } from "./claim.js";
 import type { Frame } from "./contract.js";
 import { frameOn, timelineOf } from "./timeline.js";
 
-/** Hands over no frame until every chosen track's frames are vouched for. */
+/** Hands over no frame until every chosen track's frames are read. */
 export async function framesByIndex(
   file: FrameFile,
   claims: readonly TrackClaim[],
   knobs: IndexFetch,
   watch: Watch,
+  strict: boolean,
 ): Promise<Frame[] | RefusalCode> {
   const parts = [
     () => file.firstClusterTicks(watch.signal),
@@ -43,7 +44,7 @@ export async function framesByIndex(
   const [firstClusterTicks, cues] = await gathered(parts, knobs.concurrency, watch.signal);
   const timeline = timelineOf(file, firstClusterTicks);
   if (typeof timeline === "string") return timeline;
-  const plan = planFrames(cues, claims);
+  const plan = planFrames(cues, claims, strict);
   if (!Array.isArray(plan)) return plan;
   const { head } = file;
   const headBytes = head.bytes.length;
@@ -73,12 +74,11 @@ export async function framesByIndex(
     segmentEnd: file.segment.end,
     knobs,
     head,
+    strict,
   };
   const progressBytes = { headBytes, totalBytes };
   const claimed = await collectByRound(invariants, rounds, progressBytes, watch);
   if (!Array.isArray(claimed)) return claimed;
-  const refusal = unvouched(claims, claimed);
-  if (refusal !== null) return refusal;
   return claimed.map((frame) => frameOn(frame, timeline));
 }
 
@@ -99,6 +99,7 @@ interface RoundInvariants {
   segmentEnd: number;
   knobs: IndexFetch;
   head: Window;
+  strict: boolean;
 }
 
 interface TimedRun {
@@ -121,12 +122,16 @@ const unheld = (ranges: readonly Range[], head: Window): Range[] =>
     return [{ at: range.at, length }];
   });
 
-function planFrames(byTrack: CueIndex, claims: readonly TrackClaim[]): PlannedCue[] | RefusalCode {
+function planFrames(
+  byTrack: CueIndex,
+  claims: readonly TrackClaim[],
+  strict: boolean,
+): PlannedCue[] | RefusalCode {
   const planned: PlannedCue[] = [];
   for (const claim of claims) {
     const cues = byTrack.get(claim.entry.number) ?? [];
     // Each cue reads one frame or refuses the read.
-    if (!vouchable(claim, cues.length)) {
+    if (!vouchable(claim, cues.length, strict)) {
       return "unreadable";
     }
     if (repeatedPosition(cues)) {
@@ -155,17 +160,6 @@ function stonesOf(
     .flatMap(([, positions]) => positions);
   const blocks = planBlockRanges(cues, cueAheadBytes);
   return unheld(blocks, file.head);
-}
-
-function unvouched(
-  claims: readonly TrackClaim[],
-  claimed: readonly ClaimedFrame<TrackClaim>[],
-): RefusalCode | null {
-  for (const claim of claims) {
-    const own = claimed.filter((frame) => frame.claim === claim);
-    if (!vouched(claim, own)) return "unreadable";
-  }
-  return null;
 }
 
 function repeatedPosition(cues: readonly CuePosition[]): boolean {
@@ -223,7 +217,7 @@ async function fetchRound(
   { slice, spans }: PlannedRound,
   signal: AbortSignal,
 ): Promise<FetchedRound> {
-  const { sized, knobs, head } = invariants;
+  const { sized, knobs, head, strict } = invariants;
   const bought = await fetchSpans(sized, spans, knobs.concurrency, signal);
   const buy = async (ranges: readonly Range[]) => {
     const toBuy = unheld(ranges, head);
@@ -233,7 +227,7 @@ async function fetchRound(
   };
   const blockWindows = new WindowIndex(bought, head);
   const timed = timedByCue(blockWindows, slice, invariants);
-  const sampled = samplesOf(timed);
+  const sampled = samplesOf(timed, strict);
   const probedClusters = new Set(sampled);
   for (const planned of slice) {
     if (!timed.has(planned)) probedClusters.add(planned.cue.clusterPos);
@@ -331,9 +325,9 @@ function limitAfter(starts: readonly number[], clusterPos: number, segmentEnd: n
 
 /**
  * The clusters whose heads check a round's cue times:
- * its first, its last, and its first with a cue off its clock.
+ * its first, its last, and its first with a cue off its clock, or every one of them if the read is strict.
  */
-function samplesOf(timed: ReadonlyMap<PlannedCue, CuedBlock>): Set<number> {
+function samplesOf(timed: ReadonlyMap<PlannedCue, CuedBlock>, strict: boolean): Set<number> {
   const clusters = new Set<number>();
   let offTicks: number | null = null;
   for (const [{ cue }, { clusterTicks }] of timed) {
@@ -342,6 +336,7 @@ function samplesOf(timed: ReadonlyMap<PlannedCue, CuedBlock>): Set<number> {
       offTicks = cue.clusterPos;
     }
   }
+  if (strict) return clusters;
   const inOrder = [...clusters];
   const sampled = new Set([...inOrder.slice(0, 1), ...inOrder.slice(-1)]);
   if (offTicks !== null) sampled.add(offTicks);

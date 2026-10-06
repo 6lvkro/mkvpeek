@@ -171,8 +171,6 @@ export const reachOf = (window: Window): number => window.at + window.bytes.leng
 
 export const isGrammarError = (error: unknown): boolean => error instanceof GrammarError;
 
-export const decodeUtf8 = (bytes: Uint8Array): string => UTF8.decode(bytes);
-
 export const uintFits = (size: number): boolean => size <= MAX_VINT_BYTES;
 
 export function readVint(window: Window, at: number, as: "id" | "size"): Vint | Unread {
@@ -293,7 +291,7 @@ export function readAscii(window: Window, el: Element): string {
 }
 
 export function readUtf8(window: Window, el: Element): string {
-  return decodeUtf8(stringBytes(window, el));
+  return UTF8.decode(stringBytes(window, el));
 }
 
 export function readBytes(window: Window, at: number, length: number): Uint8Array {

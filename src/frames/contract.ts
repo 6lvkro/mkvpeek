@@ -46,6 +46,13 @@ export type FrameVia = "both" | FrameFinder;
 export interface FrameOptions extends FrameTuning, Abortable {
   via?: FrameVia;
   /**
+   * Reads by the index only a track that states its frame count,
+   * and checks every cluster it reads against the cluster's own timestamp.
+   *
+   * A track it cannot prove whole goes to the walk under `both`, and is refused under `index`.
+   */
+  strict?: boolean;
+  /**
    * @example
    * const container = await openContainer(path);
    * const subtitles = container.tracks.filter((track) => track.type === "subtitle");
