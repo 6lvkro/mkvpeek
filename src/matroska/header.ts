@@ -79,8 +79,9 @@ export async function openSegment(
     body: segmentEl.body,
     end: "open" in segmentEl ? fileSize : segmentEl.next,
   };
-  const offsets = locateTopLevel(head, segment);
+  const { offsets, chained } = locateTopLevel(head, segment);
   const located: Located = { source, segment, head, signal, offsets };
+  if (chained !== null) await placeChained(located, chained);
   const noTags = new Map<string | null, TrackTag[]>();
   const [fetchedTracks, trackTags] = await Promise.all([
     fetchElement(located, E.ID.segment.TRACKS),
@@ -157,6 +158,12 @@ export async function readAttachments(
 /** The pass that learned where the top-level elements are. */
 interface Located extends SegmentPass {
   offsets: Map<number, number>;
+}
+
+interface Placed {
+  offsets: Map<number, number>;
+  /** The first SeekHead that the head's SeekHeads name. */
+  chained: number | null;
 }
 
 /**
@@ -277,7 +284,7 @@ async function hoppedTo(
   return null;
 }
 
-function locateTopLevel(head: Window, segment: Segment): Map<number, number> {
+function locateTopLevel(head: Window, segment: Segment): Placed {
   const offsets = new Map<number, number>();
   let pos = segment.body;
   const seekHeads: Element[] = [];
@@ -298,29 +305,62 @@ function locateTopLevel(head: Window, segment: Segment): Map<number, number> {
     if (el.id === E.ID.segment.CLUSTER) break;
     pos = el.next;
   }
+  let chained: number | null = null;
   try {
     for (const seekHead of seekHeads) {
-      for (const seek of E.children(head, seekHead.body, seekHead.size)) {
-        if (seek.id !== E.ID.seek.ENTRY) continue;
-        let id: number | null = null;
-        let position: number | null = null;
-        for (const field of E.children(head, seek.body, seek.size)) {
-          if (field.id === E.ID.seek.ID) {
-            id = E.readUint(head, field);
-          } else if (field.id === E.ID.seek.POSITION) {
-            position = E.readUint(head, field);
-          }
-        }
-        if (id === null || position === null || offsets.has(id)) continue;
-        if (id === E.ID.segment.CLUSTER) continue;
-        const at = segment.body + position;
-        if (at < head.fileSize) offsets.set(id, at);
-      }
+      const named = placeSeeks(head, seekHead, segment, offsets);
+      chained ??= named[0] ?? null;
     }
   } catch (error) {
     if (!E.isGrammarError(error)) throw error;
   }
-  return offsets;
+  return { offsets, chained };
+}
+
+/** Places what a SeekHead names that nothing placed yet, and answers the SeekHeads it names. */
+function placeSeeks(
+  window: Window,
+  seekHead: Element,
+  segment: Segment,
+  offsets: Map<number, number>,
+): number[] {
+  const seekHeads: number[] = [];
+  for (const seek of E.children(window, seekHead.body, seekHead.size)) {
+    if (seek.id !== E.ID.seek.ENTRY) continue;
+    let id: number | null = null;
+    let position: number | null = null;
+    for (const field of E.children(window, seek.body, seek.size)) {
+      if (field.id === E.ID.seek.ID) {
+        id = E.readUint(window, field);
+      } else if (field.id === E.ID.seek.POSITION) {
+        position = E.readUint(window, field);
+      }
+    }
+    if (id === null || position === null) continue;
+    const at = segment.body + position;
+    if (at >= window.fileSize) continue;
+    if (id === E.ID.segment.SEEK_HEAD) {
+      seekHeads.push(at);
+    } else if (id !== E.ID.segment.CLUSTER && !offsets.has(id)) {
+      offsets.set(id, at);
+    }
+  }
+  return seekHeads;
+}
+
+/**
+ * Places what a second SeekHead names.
+ *
+ * RFC 9559 §5.1.1 allows no third, so a SeekHead it names is not followed.
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc9559/#name-seekhead-element}
+ */
+async function placeChained(located: Located, at: number): Promise<void> {
+  await optional<void>(undefined, async () => {
+    const fetched = await fetchAt(located, E.ID.segment.SEEK_HEAD, at);
+    if (fetched === null) return;
+    placeSeeks(fetched.window, fetched.element, located.segment, located.offsets);
+  });
 }
 
 function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | null {
