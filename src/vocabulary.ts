@@ -64,7 +64,9 @@ export type RefusalCode =
 
 export interface Abortable {
   /**
-   * Stops this call alone, which then ends `cancelled` and reports nothing after.
+   * Stops this call alone before its next read, frame or progress report, and it then ends `cancelled`.
+   *
+   * A call with none of those left answers as it would have.
    *
    * @example
    * const stop = new AbortController();

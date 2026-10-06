@@ -143,7 +143,6 @@ async function leased(
     const opened = await openSegment(lease.source, signal, inflate);
     if (typeof opened === "string") throw new RefusalError(opened);
     const info = await readInfo(opened, signal);
-    stopIfAborted(signal);
     return new LeasedContainer(lease, opened, info, inflate);
   } catch (error) {
     await lease.release?.();

@@ -42,7 +42,6 @@ export async function* framesOf(
           stopIfAborted(signal);
           yield frame;
         }
-        stopIfAborted(signal);
         return;
       }
     }

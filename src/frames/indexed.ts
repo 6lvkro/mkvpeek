@@ -197,7 +197,6 @@ async function collectByRound(
     doneBytes += round.bytes;
     onProgress(doneBytes, totalBytes);
   }
-  stopIfAborted(signal);
   return frames;
 }
 

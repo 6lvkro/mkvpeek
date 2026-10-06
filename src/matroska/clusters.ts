@@ -181,7 +181,6 @@ export async function* walkFrames(
     if (failures.length > 0) throw failures[0];
     if (refused) throw new E.GrammarError();
     watch.onProgress(fileSize, fileSize);
-    stopIfAborted(watch.signal);
   } finally {
     ended.abort();
     queue.halt();
