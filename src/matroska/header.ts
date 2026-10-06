@@ -19,13 +19,7 @@ import {
   type Segment,
   type SegmentPass,
 } from "./chain.js";
-import {
-  type ContentCompression,
-  type ContentEncoding,
-  codecPrivateOf,
-  FRAMES_SCOPE,
-  ZLIB_ALGO,
-} from "./encoding.js";
+import { type ContentEncoding, codecPrivateOf, encodingsIn } from "./encoding.js";
 
 export interface TrackEntry {
   index: number;
@@ -174,6 +168,9 @@ type Visit = (at: number, field: Element, window: Window) => Promise<Window | nu
 
 const ELEMENT_PROBE_BYTES = 4096;
 
+/** The most an attached file's name, type, description or UID may take; a larger one is skipped. */
+const MAX_ATTACHED_FIELD_BYTES = 4096;
+
 /** The most that is fetched for one header element, whatever size it states. */
 const MAX_HEADER_ELEMENT_BYTES = 64 * 1024 ** 2;
 
@@ -183,9 +180,6 @@ const MAX_HEADER_ELEMENT_BYTES = 64 * 1024 ** 2;
  * The list and the walk inside each file count separately, so the worst case is their product.
  */
 const MAX_ATTACHMENT_CHILDREN = 4096;
-
-/** The ContentEncodingType of a compression, where 1 is an encryption. */
-const COMPRESSION_TYPE = 0;
 
 const defaultInfo = (): ContainerInfo => ({
   title: null,
@@ -523,61 +517,6 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
   return entries;
 }
 
-/** The ContentEncodings a TrackEntry states, or null when they do not parse. */
-function encodingsIn(window: Window, list: Element): ContentEncoding[] | null {
-  try {
-    const encodings: ContentEncoding[] = [];
-    for (const el of E.children(window, list.body, list.size)) {
-      if (el.id === E.ID.contentEncoding.ENCODING) {
-        encodings.push(encodingOf(window, el));
-      }
-    }
-    return encodings;
-  } catch (error) {
-    if (!E.isGrammarError(error)) throw error;
-    return null;
-  }
-}
-
-function encodingOf(window: Window, encodingEl: Element): ContentEncoding {
-  let order = 0;
-  let scope = FRAMES_SCOPE;
-  let type = COMPRESSION_TYPE;
-  let compression: ContentCompression = { algo: ZLIB_ALGO, settings: null };
-  for (const field of E.children(window, encodingEl.body, encodingEl.size)) {
-    const { id } = field;
-    if (id === E.ID.contentEncoding.ORDER) {
-      order = uintOf(window, field);
-    } else if (id === E.ID.contentEncoding.SCOPE) {
-      scope = uintOf(window, field);
-    } else if (id === E.ID.contentEncoding.TYPE) {
-      type = uintOf(window, field);
-    } else if (id === E.ID.contentEncoding.COMPRESSION) {
-      compression = compressionOf(window, field);
-    }
-  }
-  return { order, scope, compression: type === COMPRESSION_TYPE ? compression : null };
-}
-
-function compressionOf(window: Window, compressionEl: Element): ContentCompression {
-  let algo = ZLIB_ALGO;
-  let settings: Uint8Array | null = null;
-  for (const field of E.children(window, compressionEl.body, compressionEl.size)) {
-    if (field.id === E.ID.contentEncoding.COMP_ALGO) {
-      algo = uintOf(window, field);
-    } else if (field.id === E.ID.contentEncoding.COMP_SETTINGS) {
-      settings = E.readBytes(window, field.body, field.size).slice();
-    }
-  }
-  return { algo, settings };
-}
-
-function uintOf(window: Window, field: Element): number {
-  const value = E.readUint(window, field);
-  if (value === null) throw new E.GrammarError();
-  return value;
-}
-
 function parseTimestampScale(window: Window, info: Element): number {
   for (const field of E.children(window, info.body, info.size)) {
     if (field.id !== E.ID.info.TIMESTAMP_SCALE) continue;
@@ -636,7 +575,7 @@ async function readAttachedFile(
       out.size = field.size;
       return held;
     }
-    if (field.next - at > ELEMENT_PROBE_BYTES) return held;
+    if (field.next - at > MAX_ATTACHED_FIELD_BYTES) return held;
     const window = await readPastHead(located, at, field.next - at, held);
     if (field.id === E.ID.attachment.FILE_NAME) {
       out.fileName = E.readUtf8(window, field);

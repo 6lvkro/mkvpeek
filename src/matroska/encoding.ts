@@ -4,6 +4,8 @@
  * zlib and header stripping are undone; encryption and the other compressions are not.
  */
 
+import type { Element, Window } from "../ebml.js";
+import * as E from "../ebml.js";
 import { type Inflate, MAX_INFLATED_BYTES } from "../io/source.js";
 
 export interface ContentEncoding {
@@ -13,20 +15,16 @@ export interface ContentEncoding {
   compression: ContentCompression | null;
 }
 
-export interface ContentCompression {
-  algo: number;
-  /** For header stripping, the bytes taken off the front of every frame. */
-  settings: Uint8Array | null;
-}
-
 /** Its answer is a buffer of its own. */
 export type Undo = (stored: Uint8Array) => Promise<Uint8Array>;
 
+interface ContentCompression {
+  algo: number;
+  settings: Uint8Array | null;
+}
+
 /** The ContentEncodingScope bit that covers the frames. */
 export const FRAMES_SCOPE = 1;
-
-/** The ContentCompAlgo a ContentCompression means when it states none. */
-export const ZLIB_ALGO = 0;
 
 export function undoFor(
   encodings: readonly ContentEncoding[] | null,
@@ -50,6 +48,21 @@ export function undoFor(
   };
 }
 
+export function encodingsIn(window: Window, list: Element): ContentEncoding[] | null {
+  try {
+    const encodings: ContentEncoding[] = [];
+    for (const el of E.children(window, list.body, list.size)) {
+      if (el.id === E.ID.contentEncoding.ENCODING) {
+        encodings.push(encodingOf(window, el));
+      }
+    }
+    return encodings;
+  } catch (error) {
+    if (!E.isGrammarError(error)) throw error;
+    return null;
+  }
+}
+
 /** A stated compression that does not inflate counts as one this reader cannot undo. */
 export async function codecPrivateOf(
   stored: Uint8Array | null,
@@ -63,6 +76,9 @@ export async function codecPrivateOf(
   return undo(stored).catch(() => null);
 }
 
+/** The ContentCompAlgo a ContentCompression means when it states none. */
+const ZLIB_ALGO = 0;
+
 const HEADER_STRIPPING_ALGO = 3;
 
 /** The ContentEncodingScope bit that covers CodecPrivate. */
@@ -72,6 +88,8 @@ const KNOWN_SCOPES = FRAMES_SCOPE | CODEC_PRIVATE_SCOPE;
 
 /** How many times its stored bytes a stream may be undone to, under {@linkcode MAX_INFLATED_BYTES}. */
 const MAX_AMPLIFICATION = 64;
+
+const COMPRESSION_TYPE = 0;
 
 const reachesPastKnownScopes = ({ scope }: ContentEncoding): boolean =>
   (scope & ~KNOWN_SCOPES) !== 0;
@@ -88,4 +106,43 @@ function stepOf({ compression }: ContentEncoding, inflate: Inflate): Inflate | n
     whole.set(stored, stripped.length);
     return Promise.resolve(whole);
   };
+}
+
+function encodingOf(window: Window, encodingEl: Element): ContentEncoding {
+  let order = 0;
+  let scope = FRAMES_SCOPE;
+  let type = COMPRESSION_TYPE;
+  let compression: ContentCompression = { algo: ZLIB_ALGO, settings: null };
+  for (const field of E.children(window, encodingEl.body, encodingEl.size)) {
+    const { id } = field;
+    if (id === E.ID.contentEncoding.ORDER) {
+      order = uintOf(window, field);
+    } else if (id === E.ID.contentEncoding.SCOPE) {
+      scope = uintOf(window, field);
+    } else if (id === E.ID.contentEncoding.TYPE) {
+      type = uintOf(window, field);
+    } else if (id === E.ID.contentEncoding.COMPRESSION) {
+      compression = compressionOf(window, field);
+    }
+  }
+  return { order, scope, compression: type === COMPRESSION_TYPE ? compression : null };
+}
+
+function compressionOf(window: Window, compressionEl: Element): ContentCompression {
+  let algo = ZLIB_ALGO;
+  let settings: Uint8Array | null = null;
+  for (const field of E.children(window, compressionEl.body, compressionEl.size)) {
+    if (field.id === E.ID.contentEncoding.COMP_ALGO) {
+      algo = uintOf(window, field);
+    } else if (field.id === E.ID.contentEncoding.COMP_SETTINGS) {
+      settings = E.readBytes(window, field.body, field.size).slice();
+    }
+  }
+  return { algo, settings };
+}
+
+function uintOf(window: Window, field: Element): number {
+  const value = E.readUint(window, field);
+  if (value === null) throw new E.GrammarError();
+  return value;
 }
