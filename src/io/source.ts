@@ -26,6 +26,7 @@ export interface Source {
   read(at: number, length: number, into?: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>;
   /** Never called on a source handed in: whoever opened a source closes it. */
   close?(): Promise<void>;
+  /** A source that states none is read as `remote`. */
   trip?: Trip;
 }
 

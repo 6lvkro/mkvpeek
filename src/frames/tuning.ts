@@ -21,7 +21,7 @@ export function settledFrameOptions(
   if (typeof strict !== "boolean") throw new TypeError(`strict ${String(strict)} is not a boolean`);
   const preset = options.preset ?? DEFAULT_PRESET;
   if (!Object.hasOwn(TUNING, preset)) throw new TypeError(`unknown preset ${String(preset)}`);
-  const column = trip !== undefined && Object.hasOwn(TUNING[preset], trip) ? trip : "mount";
+  const column = trip !== undefined && Object.hasOwn(TUNING[preset], trip) ? trip : "remote";
   const shipped = TUNING[preset][column];
   const { concurrency } = options;
   const knobsForIndex = {
@@ -65,13 +65,13 @@ const LOCAL_KNOBS: Readonly<FetchKnobs> = {
 const MOUNT_KNOBS: Readonly<FetchKnobs> = {
   gapBytes: 16 * 1024,
   cueAheadBytes: 256,
-  blockAheadBytes: 128,
+  blockAheadBytes: 8 * 1024,
   concurrency: 16,
 };
 
 const REMOTE_KNOBS: Readonly<FetchKnobs> = {
-  gapBytes: 64 * 1024,
-  cueAheadBytes: 1024,
+  gapBytes: 32 * 1024,
+  cueAheadBytes: 256,
   blockAheadBytes: 8 * 1024,
   concurrency: 16,
 };
