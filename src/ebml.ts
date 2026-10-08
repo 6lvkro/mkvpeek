@@ -22,7 +22,6 @@ export interface Window {
 interface Vint {
   value: number;
   length: number;
-  allOnes: boolean;
 }
 
 type Unread = "unread";
@@ -159,15 +158,12 @@ export const isGrammarError = (error: unknown): boolean => error instanceof Gram
 
 export const uintFits = (size: number): boolean => size <= MAX_VINT_BYTES;
 
-export function readVint(window: Window, at: number, as: "id" | "size"): Vint | Unread {
-  const start = offsetOf(window, at, 1);
-  if (start < 0) return "unread";
-  const length = vintLength(window.bytes[start] as number);
-  if (length > MAX_VINT_BYTES) return "unread";
-  if (offsetOf(window, at, length) < 0) return "unread";
-  const value = vintValue(window.bytes, start, length, as);
-  const allOnes = vintAllOnes(window.bytes, start, length);
-  return { value, length, allOnes };
+export function readVint(window: Window, at: number): Vint | Unread {
+  const length = heldVintLength(window, at);
+  if (length === 0) return "unread";
+  const start = at - window.at;
+  const value = vintValue(window.bytes, start, length, "size");
+  return { value, length };
 }
 
 export function vintLength(lead: number): number {
@@ -216,18 +212,23 @@ export function uintValue(bytes: Uint8Array, start: number, size: number): numbe
 }
 
 export function readElement(window: Window, at: number): Element | OpenElement | Unread {
-  const { fileSize } = window;
-  const id = readVint(window, at, "id");
-  if (typeof id === "string") return id;
-  const size = readVint(window, at + id.length, "size");
-  if (typeof size === "string") return size;
-  const body = at + id.length + size.length;
-  if (size.allOnes) {
-    if (id.value !== ID.root.SEGMENT && id.value !== ID.segment.CLUSTER) return "unread";
-    return { id: id.value, body, open: true };
+  const { bytes, fileSize } = window;
+  const idLength = heldVintLength(window, at);
+  if (idLength === 0) return "unread";
+  const sizeAt = at + idLength;
+  const sizeLength = heldVintLength(window, sizeAt);
+  if (sizeLength === 0) return "unread";
+  const idStart = at - window.at;
+  const id = vintValue(bytes, idStart, idLength, "id");
+  const sizeStart = sizeAt - window.at;
+  const body = sizeAt + sizeLength;
+  if (vintAllOnes(bytes, sizeStart, sizeLength)) {
+    if (id !== ID.root.SEGMENT && id !== ID.segment.CLUSTER) return "unread";
+    return { id, body, open: true };
   }
-  if (body + size.value > fileSize) return "unread";
-  return { id: id.value, size: size.value, body, next: body + size.value };
+  const size = vintValue(bytes, sizeStart, sizeLength, "size");
+  if (body + size > fileSize) return "unread";
+  return { id, size, body, next: body + size };
 }
 
 export function* children(window: Window, body: number, size: number): Generator<Element> {
@@ -300,6 +301,14 @@ const UTF8 = new TextDecoder("utf-8", KEEPS_BOM);
 function offsetOf(window: Window, at: number, length: number): number {
   const start = at - window.at;
   return start < 0 || start + length > window.bytes.length ? -1 : start;
+}
+
+function heldVintLength(window: Window, at: number): number {
+  const start = offsetOf(window, at, 1);
+  if (start < 0) return 0;
+  const length = vintLength(window.bytes[start] as number);
+  if (length > MAX_VINT_BYTES) return 0;
+  return offsetOf(window, at, length) < 0 ? 0 : length;
 }
 
 /**

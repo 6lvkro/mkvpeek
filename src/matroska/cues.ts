@@ -123,8 +123,10 @@ export function locateByCue(
   for (let width = MIN_CLUSTER_HEADER_BYTES; width <= MAX_CLUSTER_HEADER_BYTES; width++) {
     const clusterBody = clusterPos + width;
     const blockAt = clusterBody + relPos;
+    // Both frame IDs are one byte long, so the byte a width lands on is the ID it would read.
+    if (!FRAME_IDS.has(window.bytes[blockAt - window.at] as number)) continue;
     const outer = E.readElement(window, blockAt);
-    if (!E.decoded(outer) || !FRAME_IDS.has(outer.id)) continue;
+    if (!E.decoded(outer)) continue;
     const blockHead = heldBlockHead(window, outer);
     if (blockHead === null || blockHead.trackNumber !== trackNumber) continue;
     if (cued !== null) return null;

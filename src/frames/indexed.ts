@@ -100,14 +100,18 @@ interface RoundInvariants {
 }
 
 interface TimedRun {
-  byCue: Map<PlannedCue, CuedBlock>;
+  from: number;
+  blocks: CuedBlock[];
   clusterTicks: number;
 }
 
 interface FetchedRound {
   windows: WindowIndex;
-  timed: Map<PlannedCue, CuedBlock>;
+  timed: Timed;
 }
+
+/** A round's blocks read by their own time, each at its cue's place in the slice. */
+type Timed = (CuedBlock | undefined)[];
 
 const FRAMES_PER_ROUND = 4096;
 
@@ -118,6 +122,9 @@ const unheld = (ranges: readonly Range[], head: Window): Range[] =>
     if (length === 0 || range.at + length <= head.bytes.length) return [];
     return [{ at: range.at, length }];
   });
+
+const untimedIn = (slice: readonly PlannedCue[], timed: Timed): CuePosition[] =>
+  slice.filter((_, i) => timed[i] === undefined).map((planned) => planned.cue);
 
 function planFrames(
   byTrack: CueIndex,
@@ -221,18 +228,16 @@ async function fetchRound(
   };
   const blockWindows = new WindowIndex(bought, head);
   const timed = timedByCue(blockWindows, slice, invariants);
-  const sampled = samplesOf(timed, strict);
+  const sampled = samplesOf(slice, timed, strict);
   const probedClusters = new Set(sampled);
-  for (const planned of slice) {
-    if (!timed.has(planned)) probedClusters.add(planned.cue.clusterPos);
-  }
+  for (const cue of untimedIn(slice, timed)) probedClusters.add(cue.clusterPos);
   const probedHeads = unheldHeads(blockWindows, probedClusters, sized.fileSize);
   const probes = planProbes(probedHeads);
-  const timedBlocks = timed.values();
+  const timedBlocks = timed.filter((block) => block !== undefined);
   const tails = planCuedShortfall(blockWindows, timedBlocks);
   const checked = await buy([...probes, ...tails]);
-  if (!sampledAgree(checked, timed, sampled)) timed.clear();
-  const untimed = slice.filter((planned) => !timed.has(planned)).map((planned) => planned.cue);
+  if (!sampledAgree(checked, slice, timed, sampled)) timed.fill(undefined);
+  const untimed = untimedIn(slice, timed);
   const untimedClusters = untimed.map((cue) => cue.clusterPos);
   const missingHeads = unheldHeads(checked, untimedClusters, sized.fileSize);
   const missingProbes = planProbes(missingHeads);
@@ -256,17 +261,18 @@ function timedByCue(
   windows: WindowIndex,
   slice: readonly PlannedCue[],
   { clusterStarts, segmentEnd }: RoundInvariants,
-): Map<PlannedCue, CuedBlock> {
-  const byCluster = new Map<number, PlannedCue[]>();
-  for (const planned of slice) {
-    const run = byCluster.get(planned.cue.clusterPos);
-    if (run === undefined) byCluster.set(planned.cue.clusterPos, [planned]);
-    else run.push(planned);
-  }
+): Timed {
   const kept: TimedRun[] = [];
-  for (const [clusterPos, run] of byCluster) {
+  let to = 0;
+  // The plan is sorted by position, so a cluster's cues stand together.
+  while (to < slice.length) {
+    const from = to;
+    const { clusterPos } = (slice[from] as PlannedCue).cue;
+    while (slice[to]?.cue.clusterPos === clusterPos) {
+      to += 1;
+    }
     const limit = limitAfter(clusterStarts, clusterPos, segmentEnd);
-    const timedRun = timedRunOf(windows, run, limit);
+    const timedRun = timedRunOf(windows, slice, from, to, limit);
     if (timedRun === null) continue;
     const previous = kept.at(-1);
     if (previous !== undefined && timedRun.clusterTicks < previous.clusterTicks) {
@@ -275,32 +281,36 @@ function timedByCue(
     }
     kept.push(timedRun);
   }
-  const timed = new Map<PlannedCue, CuedBlock>();
-  for (const { byCue } of kept) {
-    for (const [planned, block] of byCue) timed.set(planned, block);
+  const timed: Timed = new Array(slice.length).fill(undefined);
+  for (const { from, blocks } of kept) {
+    for (let i = 0; i < blocks.length; i += 1) {
+      timed[from + i] = blocks[i];
+    }
   }
   return timed;
 }
 
 function timedRunOf(
   windows: WindowIndex,
-  run: readonly PlannedCue[],
+  slice: readonly PlannedCue[],
+  from: number,
+  to: number,
   limit: number,
 ): TimedRun | null {
-  const byCue = new Map<PlannedCue, CuedBlock>();
-  for (const planned of run) {
-    const block = locateByCue(windows, planned.cue, planned.claim.entry.number);
+  const blocks: CuedBlock[] = [];
+  for (let i = from; i < to; i += 1) {
+    const { cue, claim } = slice[i] as PlannedCue;
+    const block = locateByCue(windows, cue, claim.entry.number);
     if (block === null || block.outer.next > limit) return null;
-    byCue.set(planned, block);
+    blocks.push(block);
   }
-  const blocks = [...byCue.values()];
   const first = blocks[0] as CuedBlock;
   const oneCluster = blocks.every(
     (block) => block.clusterBody === first.clusterBody && block.clusterTicks === first.clusterTicks,
   );
   if (!oneCluster) return null;
   const { clusterTicks } = first;
-  return { byCue, clusterTicks };
+  return { from, blocks, clusterTicks };
 }
 
 function limitAfter(starts: readonly number[], clusterPos: number, segmentEnd: number): number {
@@ -321,12 +331,15 @@ function limitAfter(starts: readonly number[], clusterPos: number, segmentEnd: n
  * The clusters whose heads check a round's cue times:
  * its first, its last, and its first with a cue off its clock, or every one of them if the read is strict.
  */
-function samplesOf(timed: ReadonlyMap<PlannedCue, CuedBlock>, strict: boolean): Set<number> {
+function samplesOf(slice: readonly PlannedCue[], timed: Timed, strict: boolean): Set<number> {
   const clusters = new Set<number>();
   let offTicks: number | null = null;
-  for (const [{ cue }, { clusterTicks }] of timed) {
+  for (let i = 0; i < slice.length; i += 1) {
+    const cued = timed[i];
+    if (cued === undefined) continue;
+    const { cue } = slice[i] as PlannedCue;
     clusters.add(cue.clusterPos);
-    if (offTicks === null && cue.ticks !== clusterTicks) {
+    if (offTicks === null && cue.ticks !== cued.clusterTicks) {
       offTicks = cue.clusterPos;
     }
   }
@@ -339,10 +352,14 @@ function samplesOf(timed: ReadonlyMap<PlannedCue, CuedBlock>, strict: boolean): 
 
 function sampledAgree(
   windows: WindowIndex,
-  timed: ReadonlyMap<PlannedCue, CuedBlock>,
+  slice: readonly PlannedCue[],
+  timed: Timed,
   sampled: ReadonlySet<number>,
 ): boolean {
-  for (const [{ cue }, cued] of timed) {
+  for (let i = 0; i < slice.length; i += 1) {
+    const cued = timed[i];
+    if (cued === undefined) continue;
+    const { cue } = slice[i] as PlannedCue;
     if (sampled.has(cue.clusterPos) && !agreesWithCluster(windows, cue, cued)) return false;
   }
   return true;
@@ -351,15 +368,15 @@ function sampledAgree(
 async function readRound(
   windows: WindowIndex,
   slice: readonly PlannedCue[],
-  timed: ReadonlyMap<PlannedCue, CuedBlock>,
+  timed: Timed,
   timeline: Timeline,
 ): Promise<Frame[]> {
   const frames: Frame[] = [];
   const memo: ClusterMemo = { last: null };
-  for (const planned of slice) {
-    const { claim, cue } = planned;
+  for (let i = 0; i < slice.length; i += 1) {
+    const { claim, cue } = slice[i] as PlannedCue;
     const { number, index } = claim.entry;
-    const cued = timed.get(planned);
+    const cued = timed[i];
     const frame =
       cued === undefined
         ? await readFrame(windows, cue, number, claim, memo)

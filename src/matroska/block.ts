@@ -140,7 +140,7 @@ const BLOCK_GROUP_PROBE_BYTES = 256;
 const LACING_MASK = 0x06;
 
 function readBlockHead(window: Window, body: number, size: number): BlockHead | BlockClause {
-  const trackNumber = E.readVint(window, body, "size");
+  const trackNumber = E.readVint(window, body);
   if (typeof trackNumber === "string") return BLOCK_REFUSAL.blockHead;
   const bytesAt = body + trackNumber.length;
   if (!E.covers(window, bytesAt, TIME_AND_FLAGS_BYTES)) return BLOCK_REFUSAL.blockHead;
