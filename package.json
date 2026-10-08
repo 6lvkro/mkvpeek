@@ -18,6 +18,7 @@
     "ffmpeg",
     "ffprobe"
   ],
+  "homepage": "https://atelier.6lvk.ro/mkvpeek/",
   "author": "6lvkro",
   "repository": {
     "type": "git",

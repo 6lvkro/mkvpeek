@@ -1,5 +1,8 @@
 # mkvpeek
 
+[![npm](https://img.shields.io/npm/v/mkvpeek)](https://www.npmjs.com/package/mkvpeek)
+[![demo](https://img.shields.io/badge/demo-try_it_in_your_browser-2ea44f)](https://atelier.6lvk.ro/mkvpeek/demo/)
+
 MKV tracks and subtitles in pure JavaScript, reading a fraction of the file.
 
 ```text
