@@ -1,8 +1,11 @@
 import type { Container } from "../container/contract.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
-import { assemble, writerOf } from "./assemble.js";
 import type { SubtitleFile, SubtitleFormat } from "./contract.js";
+import { assembleSrt } from "./srt.js";
+import { assembleSubstation, substationScript } from "./substation.js";
+import { assembleSup } from "./sup.js";
+import { assembleVtt } from "./vtt.js";
 
 export interface SubtitleOptions extends FrameOptions {
   /**
@@ -34,8 +37,10 @@ export function subtitleFormat(track: Track): SubtitleFormat | null {
  * if (sub !== null) await writeFile(`${name}.${sub.format}`, sub.bytes);
  */
 export function subtitleFile(track: Track, frames: readonly Frame[]): SubtitleFile | null {
+  const writer = writerOf(track);
+  if (writer === null) return null;
   const own = frames.filter((frame) => frame.trackIndex === track.index && frame.data.length > 0);
-  return assemble(track, own);
+  return { track, format: writer.format, bytes: writer.write(own) };
 }
 
 /**
@@ -61,6 +66,11 @@ export async function subtitleFiles(
   return written.map((track) => subtitleFile(track, frames) as SubtitleFile);
 }
 
+interface Writer {
+  format: SubtitleFormat;
+  write: (frames: readonly Frame[]) => Uint8Array;
+}
+
 const TEXT_FORMATS: ReadonlySet<SubtitleFormat> = new Set<SubtitleFormat>([
   "ass",
   "ssa",
@@ -76,4 +86,30 @@ function formatsNamed(formats: readonly SubtitleFormat[] | undefined): ReadonlyS
     if (!FORMATS.has(format)) throw new TypeError(`unknown format ${String(format)}`);
   }
   return named;
+}
+
+function writerOf(track: Track): Writer | null {
+  switch (track.codecId) {
+    case "S_TEXT/ASS":
+    case "S_TEXT/SSA":
+    case "S_SSA":
+    case "S_ASS":
+      return substationWriter(track);
+    case "S_TEXT/UTF8":
+      return { format: "srt", write: assembleSrt };
+    case "D_WEBVTT/SUBTITLES":
+    case "D_WEBVTT/CAPTIONS":
+      return { format: "vtt", write: assembleVtt };
+    case "S_HDMV/PGS":
+      return { format: "sup", write: assembleSup };
+    default:
+      return null;
+  }
+}
+
+function substationWriter(track: Track): Writer | null {
+  const script = substationScript(track);
+  if (script === null) return null;
+  const write = (frames: readonly Frame[]) => assembleSubstation(script, frames);
+  return { format: script.format, write };
 }

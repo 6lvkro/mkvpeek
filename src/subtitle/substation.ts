@@ -1,35 +1,54 @@
 import type { Frame } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
-import type { SubtitleFile, SubtitleFormat } from "./contract.js";
+import { clockFields, ENCODER, MS_PER_SECOND, timesOf, UTF8 } from "./text.js";
 
-interface Writer {
-  format: SubtitleFormat;
-  write: (frames: readonly Frame[]) => Uint8Array;
+interface Script {
+  text: string;
+  format: "ass" | "ssa";
 }
 
-/** A track's own frames as the file ffmpeg's -c:s copy writes, or null for a track it does not write. */
-export function assemble(track: Track, frames: readonly Frame[]): SubtitleFile | null {
-  const writer = writerOf(track);
-  return writer === null ? null : { track, format: writer.format, bytes: writer.write(frames) };
+/** A SubStation track is written in the format its script's head states, and not without a head. */
+export function substationScript(track: Track): Script | null {
+  if (track.codecPrivate === null) return null;
+  const text = UTF8.decode(track.codecPrivate);
+  const format = text === "" || cString(text).includes("\n[V4+ Styles]") ? "ass" : "ssa";
+  return { text, format };
 }
 
-export function writerOf(track: Track): Writer | null {
-  switch (track.codecId) {
-    case "S_TEXT/ASS":
-    case "S_TEXT/SSA":
-    case "S_SSA":
-    case "S_ASS":
-      return substationWriter(track);
-    case "S_TEXT/UTF8":
-      return { format: "srt", write: (frames) => ENCODER.encode(assembleSrt(frames)) };
-    case "D_WEBVTT/SUBTITLES":
-    case "D_WEBVTT/CAPTIONS":
-      return { format: "vtt", write: (frames) => ENCODER.encode(assembleVtt(frames)) };
-    case "S_HDMV/PGS":
-      return { format: "sup", write: assembleSup };
-    default:
-      return null;
+export function assembleSubstation(
+  { text: script, format }: Script,
+  frames: readonly Frame[],
+): Uint8Array {
+  const searched = cString(script);
+  const eventsAt = searched.indexOf("\n[Events]");
+  const formatAt = eventsAt < 0 ? -1 : searched.indexOf("Format:", eventsAt);
+  const formatEnd = formatAt < 0 ? -1 : searched.indexOf("\n", formatAt);
+  const headEnd = formatEnd < 0 ? script.length : formatEnd + 1;
+  const firstColumn = format === "ass" ? "Layer" : "Marked";
+  const added =
+    script !== "" && eventsAt < 0
+      ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n`
+      : "";
+  const dialogues = frames.map((frame) => dialogueOf(frame, format));
+  const written = inReadOrder(dialogues);
+  const headText = `${lines(script.slice(0, headEnd))}${added}`;
+  const head = ENCODER.encode(headText);
+  const trailerText = lines(script.slice(headEnd));
+  const trailer = ENCODER.encode(trailerText);
+  const opening = format === "ass" ? "Dialogue: " : `Dialogue: ${MARKED_PREFIX}`;
+  let size = head.length + trailer.length;
+  for (const { layer, start, end, text } of written) {
+    size += opening.length + layer.length + timeBytes(start) + timeBytes(end) + text.length;
+    size += LINE_PUNCTUATION_BYTES;
   }
+  const file = new Uint8Array(size);
+  file.set(head);
+  let at = head.length;
+  for (const dialogue of written) {
+    at = writeDialogue(file, at, opening, dialogue);
+  }
+  file.set(trailer, at);
+  return file;
 }
 
 interface Dialogue {
@@ -44,33 +63,15 @@ interface QueuedDialogue extends Dialogue {
   arrival: number;
 }
 
-interface VttCue {
-  id: string;
-  settings: string;
-  text: string;
-}
-
 /** A number C's strtol read, and where its reading stopped. */
 interface LeadingNumber {
   value: CLong;
   end: number;
 }
 
-interface Elapsed {
-  hours: number;
-  minutes: number;
-  seconds: number;
-  fraction: number;
-}
-
 /** A C long, held as a number wherever a double holds it exactly. */
 type CLong = number | bigint;
 
-const UTF8 = new TextDecoder("utf-8", { ignoreBOM: true });
-
-const ENCODER = new TextEncoder();
-
-const MS_PER_SECOND = 1000;
 const CS_PER_SECOND = 100;
 const MS_PER_CS = MS_PER_SECOND / CS_PER_SECOND;
 
@@ -111,18 +112,6 @@ const NINE = 0x39;
 const CONTINUATION_LOW = 0x80;
 const CONTINUATION_HIGH = 0xbf;
 
-/** "PG", then the PTS and the DTS, ahead of each segment of a .sup file. */
-const SUP_HEAD_BYTES = 10;
-
-const SUP_MAGIC = 0x5047;
-
-const SUP_TICKS_PER_MS = 90;
-
-/** A PGS segment's type and its 16-bit size. */
-const SEGMENT_HEAD_BYTES = 3;
-
-const padded = (n: number, width = 2): string => String(n).padStart(width, "0");
-
 const cString = (text: string): string => text.split("\0", 1)[0] as string;
 
 const timeBytes = (cs: number): number => (Number.isNaN(cs) ? NAN_TIME.length : TIME_BYTES);
@@ -134,121 +123,11 @@ const isDigit = (byte: number): boolean => byte >= ZERO && byte <= NINE;
 const precedes = (a: QueuedDialogue, b: QueuedDialogue): boolean =>
   a.order < b.order || (a.order === b.order && a.arrival < b.arrival);
 
-/** A SubStation track is written in the format its script's head states, and not without a head. */
-function substationWriter(track: Track): Writer | null {
-  if (track.codecPrivate === null) return null;
-  const script = UTF8.decode(track.codecPrivate);
-  const format = script === "" || cString(script).includes("\n[V4+ Styles]") ? "ass" : "ssa";
-  const write = (frames: readonly Frame[]) => assembleSubstation(script, format, frames);
-  return { format, write };
-}
-
-function assembleSubstation(
-  script: string,
-  format: "ass" | "ssa",
-  frames: readonly Frame[],
-): Uint8Array {
-  const searched = cString(script);
-  const eventsAt = searched.indexOf("\n[Events]");
-  const formatAt = eventsAt < 0 ? -1 : searched.indexOf("Format:", eventsAt);
-  const formatEnd = formatAt < 0 ? -1 : searched.indexOf("\n", formatAt);
-  const headEnd = formatEnd < 0 ? script.length : formatEnd + 1;
-  const firstColumn = format === "ass" ? "Layer" : "Marked";
-  const added =
-    script !== "" && eventsAt < 0
-      ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n`
-      : "";
-  const dialogues = frames.map((frame) => dialogueOf(frame, format));
-  const written = inReadOrder(dialogues);
-  const headText = `${lines(script.slice(0, headEnd))}${added}`;
-  const head = ENCODER.encode(headText);
-  const trailerText = lines(script.slice(headEnd));
-  const trailer = ENCODER.encode(trailerText);
-  const opening = format === "ass" ? "Dialogue: " : `Dialogue: ${MARKED_PREFIX}`;
-  let size = head.length + trailer.length;
-  for (const { layer, start, end, text } of written) {
-    size += opening.length + layer.length + timeBytes(start) + timeBytes(end) + text.length;
-    size += LINE_PUNCTUATION_BYTES;
-  }
-  const file = new Uint8Array(size);
-  file.set(head);
-  let at = head.length;
-  for (const dialogue of written) {
-    at = writeDialogue(file, at, opening, dialogue);
-  }
-  file.set(trailer, at);
-  return file;
-}
-
-function assembleSrt(frames: readonly Frame[]): string {
-  const events = frames.map((frame, i) => {
-    const [start, end] = timesOf(frame, 1);
-    const payload = UTF8.decode(frame.data);
-    return `${String(i + 1)}\n${srtTime(start)} --> ${srtTime(end)}\n${payload}\n\n`;
-  });
-  return events.join("");
-}
-
-function assembleVtt(frames: readonly Frame[]): string {
-  const cues = frames.map((frame) => {
-    const { id, settings, text } = vttCueOf(UTF8.decode(frame.data));
-    const [start, end] = timesOf(frame, 1);
-    const idLine = id === "" ? "" : `${id}\n`;
-    const timingTail = settings === "" ? "" : ` ${settings}`;
-    return `\n${idLine}${vttTime(start)} --> ${vttTime(end)}${timingTail}\n${text}\n`;
-  });
-  return `WEBVTT\n${cues.join("")}`;
-}
-
-function assembleSup(frames: readonly Frame[]): Uint8Array {
-  const parts: Uint8Array[] = [];
-  for (const frame of frames) {
-    const head = supHead(Math.round(frame.startMs * SUP_TICKS_PER_MS));
-    for (const segment of segmentsOf(frame.data)) parts.push(head, segment);
-  }
-  const file = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
-  let at = 0;
-  for (const part of parts) {
-    file.set(part, at);
-    at += part.length;
-  }
-  return file;
-}
-
-/** The ticks are written in 32 bits, so a start past them wraps as ffmpeg's does. */
-function supHead(ticks: number): Uint8Array {
-  const head = new Uint8Array(SUP_HEAD_BYTES);
-  const view = new DataView(head.buffer);
-  view.setUint16(0, SUP_MAGIC);
-  view.setUint32(2, ticks);
-  view.setUint32(6, ticks);
-  return head;
-}
-
-/** A PGS frame's whole segments, leaving out what follows the last of them. */
-function segmentsOf(data: Uint8Array): Uint8Array[] {
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const segments: Uint8Array[] = [];
-  let at = 0;
-  while (data.length - at >= SEGMENT_HEAD_BYTES) {
-    const end = at + SEGMENT_HEAD_BYTES + view.getUint16(at + 1);
-    if (end > data.length) break;
-    segments.push(data.subarray(at, end));
-    at = end;
-  }
-  return segments;
-}
-
 /** CR, LF and CRLF each end a line, and each is written ending in LF. */
 function lines(text: string): string {
   const split = text.split(/\r\n|\r|\n/);
   if (split.at(-1) === "") split.pop();
   return split.map((line) => `${line}\n`).join("");
-}
-
-function timesOf(frame: Frame, msPerUnit: number): readonly [number, number] {
-  const start = Math.round(frame.startMs / msPerUnit);
-  return [start, start + Math.round((frame.durationMs ?? 0) / msPerUnit)];
 }
 
 /** A field stops at a NUL as at any byte not its own, so only the text is cut at the first one. */
@@ -433,34 +312,6 @@ function writeAscii(file: Uint8Array, at: number, ascii: string): number {
   return at + ascii.length;
 }
 
-function lineEndsTrimmed(text: string): string {
-  let end = text.length;
-  while (text[end - 1] === "\r" || text[end - 1] === "\n") {
-    end -= 1;
-  }
-  return text.slice(0, end);
-}
-
-function vttCueOf(payload: string): VttCue {
-  const match = /^([^\r\n]*)(?:\r\n|\r(?!\n)|\n)([^\r\n]*)(?:\r\n|\r(?!\n)|\n)/.exec(payload);
-  if (match === null) return { id: "", settings: "", text: lineEndsTrimmed(payload) };
-  const id = match[1] as string;
-  const settings = match[2] as string;
-  return { id, settings, text: lineEndsTrimmed(payload.slice(match[0].length)) };
-}
-
-function clockFields(duration: number, perSecond: number): Elapsed {
-  const at = Math.max(0, duration);
-  const perMinute = 60 * perSecond;
-  const perHour = 60 * perMinute;
-  return {
-    hours: Math.floor(at / perHour),
-    minutes: Math.floor((at % perHour) / perMinute),
-    seconds: Math.floor((at % perMinute) / perSecond),
-    fraction: at % perSecond,
-  };
-}
-
 function writeTime(file: Uint8Array, at: number, cs: number): number {
   if (Number.isNaN(cs)) return writeAscii(file, at, NAN_TIME);
   const capped = Math.min(cs, LAST_SUBSTATION_CS);
@@ -478,15 +329,4 @@ function writeTime(file: Uint8Array, at: number, cs: number): number {
 function writeTwoDigits(file: Uint8Array, at: number, value: number): void {
   file[at] = ZERO + Math.floor(value / 10);
   file[at + 1] = ZERO + (value % 10);
-}
-
-function vttTime(ms: number): string {
-  const { hours, minutes, seconds, fraction } = clockFields(ms, MS_PER_SECOND);
-  const belowHours = `${padded(minutes)}:${padded(seconds)}.${padded(fraction, 3)}`;
-  return hours === 0 ? belowHours : `${padded(hours)}:${belowHours}`;
-}
-
-function srtTime(ms: number): string {
-  const { hours, minutes, seconds, fraction } = clockFields(ms, MS_PER_SECOND);
-  return `${padded(hours)}:${padded(minutes)}:${padded(seconds)},${padded(fraction, 3)}`;
 }
