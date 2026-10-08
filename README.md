@@ -75,19 +75,18 @@ try {
 ```
 
 For request options such as headers, open the source with `urlSource`; whoever opens a source closes it.
-Anything with `size` and `read` is a source too, such as one that reads a `File` as it goes.
+`blobSource` reads a `File`, or any other `Blob`, as it goes.
 
 ```ts
-import { openContainer, peekTracks, urlSource } from "mkvpeek";
+import { blobSource, openContainer, peekTracks, urlSource } from "mkvpeek";
 
 await using source = await urlSource(url, { headers });
 const { tracks } = await peekTracks(source);
 
-const container = await openContainer({
-  size: () => Promise.resolve(file.size),
-  read: async (at, n) => new Uint8Array(await file.slice(at, at + n).arrayBuffer()),
-});
+const container = await openContainer(blobSource(file));
 ```
+
+`blobSource` reads as from a local disk, since a page is never told where a file lives; for a file on a network share, pass `blobSource(file, { trip: "mount" })`.
 
 ## Constraints and read path selection
 

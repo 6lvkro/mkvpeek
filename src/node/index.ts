@@ -8,6 +8,7 @@ export type {
   Abortable,
   AsyncDisposal,
   Attachment,
+  BlobOptions,
   Container,
   ContainerInfo,
   Frame,
@@ -32,6 +33,7 @@ export type {
   UrlOptions,
 } from "../index.js";
 export {
+  blobSource,
   RefusalError,
   subtitleFile,
   subtitleFiles,

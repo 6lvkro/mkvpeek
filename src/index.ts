@@ -11,6 +11,8 @@ export type {
   FrameTuning,
   FrameVia,
 } from "./frames/contract.js";
+export type { BlobOptions } from "./io/blob.js";
+export { blobSource } from "./io/blob.js";
 export type { UrlOptions } from "./io/http.js";
 export { urlSource } from "./io/http.js";
 export type { Source, Trip } from "./io/source.js";

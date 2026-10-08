@@ -26,11 +26,7 @@ import type { Abortable } from "./vocabulary.js";
  *
  * @example
  * // Without loading an uploaded File into memory
- * const source: Source = {
- *   size: () => Promise.resolve(file.size),
- *   read: async (at, n) => new Uint8Array(await file.slice(at, at + n).arrayBuffer()),
- * };
- * const { tracks } = await peekTracks(source);
+ * const { tracks } = await peekTracks(blobSource(file));
  */
 export function peekTracks(target: Target, options?: Abortable): Promise<Listing> {
   return peekWith(PLATFORM, target, options);
