@@ -59,7 +59,7 @@ const LOCAL_KNOBS: Readonly<FetchKnobs> = {
   gapBytes: 8 * 1024,
   cueAheadBytes: 256,
   blockAheadBytes: 2 * 1024 ** 2,
-  concurrency: 2,
+  concurrency: 8,
 };
 
 const MOUNT_KNOBS: Readonly<FetchKnobs> = {
