@@ -81,12 +81,16 @@ export interface Abortable {
   signal?: AbortSignal;
 }
 
-/** A refusal a peek, an open, a read of frames or `attachments` throws. */
+/**
+ * A refusal a peek, an open, a read of frames or `attachments` throws.
+ *
+ * Under `source-failed`, its `cause` is what the source threw.
+ */
 export class RefusalError extends Error {
   readonly code: RefusalCode;
 
-  constructor(code: RefusalCode) {
-    super(code);
+  constructor(code: RefusalCode, options?: { cause?: unknown }) {
+    super(code, options);
     this.name = "RefusalError";
     this.code = code;
   }

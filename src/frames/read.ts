@@ -22,7 +22,6 @@ export async function* framesOf(
   closing: AbortSignal,
 ): AsyncGenerator<Frame> {
   const { signal, unlink } = linkedSignal(callerSignal, closing);
-  const asRefusal = (error: unknown) => refusalOf(error, signal, "unreadable");
   const watching = (finder: FrameFinder) =>
     watchOver(signal, (doneBytes, totalBytes) => onProgress?.({ finder, doneBytes, totalBytes }));
   try {
@@ -51,8 +50,7 @@ export async function* framesOf(
       yield frame;
     }
   } catch (error) {
-    const refusal = asRefusal(error);
-    throw new RefusalError(refusal);
+    throw refusalOf(error, signal, "unreadable");
   } finally {
     unlink();
   }

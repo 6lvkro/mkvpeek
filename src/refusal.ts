@@ -3,11 +3,12 @@ import { abortReason } from "./io/source.js";
 import { type RefusalCode, RefusalError } from "./vocabulary.js";
 
 export function refusalOf(
-  error: unknown,
+  cause: unknown,
   signal: AbortSignal | undefined,
   grammarCode: Extract<RefusalCode, "malformed" | "unreadable"> = "malformed",
-): RefusalCode {
-  if (abortReason(signal) !== null) return "cancelled";
-  if (error instanceof RefusalError) return error.code;
-  return E.isGrammarError(error) ? grammarCode : "source-failed";
+): RefusalError {
+  if (abortReason(signal) !== null) return new RefusalError("cancelled");
+  if (cause instanceof RefusalError) return cause;
+  if (E.isGrammarError(cause)) return new RefusalError(grammarCode);
+  return new RefusalError("source-failed", { cause });
 }
