@@ -33,6 +33,12 @@ npm install mkvpeek
 Node 22.1 or later, no other dependencies.
 In the browser, `mkvpeek/browser` is the same reader minus file paths.
 
+| Reads | Chrome, Edge | Firefox | Safari |
+| --- | --- | --- | --- |
+| bytes or a `File` | 98 | 97 | 15.4 |
+| a URL | 126 | 126 | 18 |
+| a track compressed with zlib | 98 | 113 | 16.4 |
+
 ## Usage
 
 ```ts
@@ -57,12 +63,6 @@ try {
 }
 ```
 
-- `peekTracks` reads only the header, and answers every track with the container's `info`.
-- `openContainer` keeps the file open for `frames`, `readable` and `attachments`, until `close` or the end of the `await using` block.
-- `subtitleFiles` reads every ASS, SSA, SubRip and WebVTT track in one plan and writes each out; `formats` names others, such as `sup` for PGS.
-- `subtitleFile` writes one track from its frames, in the format `subtitleFormat` names.
-- A refusal is thrown as a `RefusalError`, whose `code` says why.
-
 Node 22 runs `await using` only through a compiler such as TypeScript or esbuild.
 In plain JavaScript there, close the container in a `finally`.
 
@@ -77,29 +77,21 @@ try {
 }
 ```
 
-For request options such as headers, open the source with `urlSource`; whoever opens a source closes it.
-`blobSource` reads a `File`, or any other `Blob`, as it goes.
+Request options such as headers go through `urlSource`.
 
 ```ts
-import { blobSource, openContainer, peekTracks, urlSource } from "mkvpeek";
+import { peekTracks, urlSource } from "mkvpeek";
 
 await using source = await urlSource(url, { headers });
 const { tracks } = await peekTracks(source);
-
-const container = await openContainer(blobSource(file));
 ```
 
-`blobSource` reads as from a local disk, since a page is never told where a file lives; for a file on a network share, pass `blobSource(file, { trip: "mount" })`.
+## Constraints
 
-## Constraints and read path selection
-
-Frames are, for now, the subtitle tracks' alone. Where a track's frames are stored encoded, it undoes `zlib` and `header stripping`, and refuses a read of any other encoding, or of another kind of track, before it fetches a frame.
-
-- By default the fast path (`index`) follows the file's `Cues` unless the file contradicts them, and then backs off to the slow path (`walk`), which visits every cluster.
-- A short `Cues` list on a track that states no frame count can go unnoticed; `strict: true` trusts only what the file proves, at the cost of more reads.
-- Only `walk` streams its frames; `index` vouches for all of them before handing any over.
-- On a high-latency link `walk` loses its speed to round trips; downloading the file once and passing the bytes can be faster.
+- Frames are read from subtitle tracks only.
+- Of the encodings a track's frames can be stored in, it undoes `zlib` and `header stripping`, and refuses any other.
 - A server has to answer a Range request with 206.
+- On a high-latency link the cluster-by-cluster `walk` loses its speed to round trips; downloading the file once and passing the bytes can be faster.
 
 This reads fewer containers than the external tools, so where one is available, read by `index` and hand refused files to it.
 
