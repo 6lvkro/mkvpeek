@@ -96,7 +96,7 @@ export interface FrameProgress {
   /** Grows toward `totalBytes`, and never goes back. */
   doneBytes: number;
   /**
-   * - `index`: the bytes the plan means to fetch
+   * - `index`: the bytes the plan means to fetch, raised by what the read fetches past it
    *
    * - `walk`: the file size
    */

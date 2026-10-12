@@ -8,7 +8,7 @@ import {
   stopIfAborted,
   type Watch,
 } from "../io/source.js";
-import { coalesceAcross, fetchRanges, fetchSpans, WindowIndex } from "../io/windows.js";
+import { coalesceAcross, fetchSpans, WindowIndex } from "../io/windows.js";
 import { CLUSTER_PROBE_BYTES } from "../matroska/chain.js";
 import {
   agreesWithCluster,
@@ -57,9 +57,7 @@ export async function framesByIndex(
     const wanted = [...blocks, ...probes];
     const toBuy = unheld(wanted, head);
     const spans = coalesceAcross(toBuy, stones, knobs);
-    const beyondHead = (sum: number, span: Range) =>
-      sum + (span.at + span.length - Math.max(span.at, headBytes));
-    const round = { slice, spans, bytes: spans.reduce(beyondHead, 0) };
+    const round = { slice, spans, bytes: bytesOf(spans) };
     rounds.push(round);
   }
   const totalBytes = headBytes + rounds.reduce((sum, r) => sum + r.bytes, 0);
@@ -108,6 +106,7 @@ interface TimedRun {
 interface FetchedRound {
   windows: WindowIndex;
   timed: Timed;
+  unplannedBytes: number;
 }
 
 /** A round's blocks read by their own time, each at its cue's place in the slice. */
@@ -125,6 +124,9 @@ const unheld = (ranges: readonly Range[], head: Window): Range[] =>
 
 const untimedIn = (slice: readonly PlannedCue[], timed: Timed): CuePosition[] =>
   slice.filter((_, i) => timed[i] === undefined).map((planned) => planned.cue);
+
+const bytesOf = (spans: readonly Range[]): number =>
+  spans.reduce((sum, span) => sum + span.length, 0);
 
 function planFrames(
   byTrack: CueIndex,
@@ -196,13 +198,15 @@ async function collectByRound(
 ): Promise<Frame[]> {
   const frames: Frame[] = [];
   let doneBytes = headBytes;
+  let priceBytes = totalBytes;
   for (const round of rounds) {
     stopIfAborted(signal);
-    const { windows, timed } = await fetchRound(invariants, round, signal);
+    const { windows, timed, unplannedBytes } = await fetchRound(invariants, round, signal);
     const roundFrames = await readRound(windows, round.slice, timed, invariants.timeline);
     frames.push(...roundFrames);
-    doneBytes += round.bytes;
-    onProgress(doneBytes, totalBytes);
+    doneBytes += round.bytes + unplannedBytes;
+    priceBytes += unplannedBytes;
+    onProgress(doneBytes, priceBytes);
   }
   return frames;
 }
@@ -220,9 +224,12 @@ async function fetchRound(
 ): Promise<FetchedRound> {
   const { sized, knobs, head, strict } = invariants;
   const bought = await fetchSpans(sized, spans, knobs.concurrency, signal);
+  let unplannedBytes = 0;
   const buy = async (ranges: readonly Range[]) => {
     const toBuy = unheld(ranges, head);
-    const fetched = await fetchRanges(sized, toBuy, knobs, signal);
+    const extra = coalesceAcross(toBuy, [], knobs);
+    const fetched = await fetchSpans(sized, extra, knobs.concurrency, signal);
+    unplannedBytes += bytesOf(extra);
     bought.push(...fetched);
     return new WindowIndex(bought, head);
   };
@@ -244,7 +251,7 @@ async function fetchRound(
   const located = await buy(missingProbes);
   const untimedTails = planShortfall(located, untimed);
   const windows = await buy(untimedTails);
-  return { windows, timed };
+  return { windows, timed, unplannedBytes };
 }
 
 function unheldHeads(windows: WindowIndex, clusters: Iterable<number>, fileSize: number): number[] {

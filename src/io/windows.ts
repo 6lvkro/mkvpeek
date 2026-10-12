@@ -56,16 +56,6 @@ export class WindowIndex {
   }
 }
 
-export async function fetchRanges(
-  sized: SizedSource,
-  ranges: readonly Range[],
-  knobs: Pick<IndexFetch, "gapBytes" | "concurrency">,
-  signal?: AbortSignal,
-): Promise<Window[]> {
-  const spans = coalesceAcross(ranges, [], knobs);
-  return fetchSpans(sized, spans, knobs.concurrency, signal);
-}
-
 export async function fetchSpans(
   sized: SizedSource,
   spans: readonly Range[],
