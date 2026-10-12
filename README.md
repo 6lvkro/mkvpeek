@@ -104,14 +104,14 @@ Frames are, for now, the subtitle tracks' alone. Where a track's frames are stor
 This reads fewer containers than the external tools, so where one is available, read by `index` and hand refused files to it.
 
 ```ts
-import { openContainer, RefusalError, worthFallback } from "mkvpeek";
+import { openContainer, worthFallback } from "mkvpeek";
 
 try {
   await using container = await openContainer(path);
   const subtitles = container.tracks.filter((track) => track.type === "subtitle");
   for await (const frame of container.frames(subtitles, { via: "index" })) use(frame);
 } catch (error) {
-  if (!(error instanceof RefusalError) || !worthFallback(error.code)) throw error;
+  if (!worthFallback(error)) throw error;
   await demux(path);
 }
 ```

@@ -97,19 +97,23 @@ export class RefusalError extends Error {
 }
 
 /**
- * Whether a file this reader refused is worth handing to another tool, ffmpeg say.
+ * Whether the file behind a `RefusalError`, or its `code`, is worth handing to another tool, ffmpeg say.
  *
- * Yes for a refusal that read the container; no where the bytes did not arrive or the call was wrong.
+ * Yes for a refusal that read the container;
+ * no for one where the bytes did not arrive or the call was wrong, and for anything else.
  *
  * @example
  * try {
  *   return (await peekTracks(path)).tracks;
  * } catch (error) {
- *   if (error instanceof RefusalError && worthFallback(error.code)) return demux(path);
+ *   if (worthFallback(error)) return demux(path);
  *   throw error;
  * }
  */
-export const worthFallback = (code: RefusalCode): boolean => WORTH_FALLBACK[code] === true;
+export function worthFallback(refusal: unknown): boolean {
+  if (refusal instanceof RefusalError) return worthFallback(refusal.code);
+  return Object.entries(WORTH_FALLBACK).some(([code, worth]) => worth && code === refusal);
+}
 
 const WORTH_FALLBACK: Readonly<Record<RefusalCode, boolean>> = {
   "not-matroska": true,
