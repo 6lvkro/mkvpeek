@@ -97,12 +97,6 @@ export async function* walkFrames(
       while (await admitted(foundCount)) {
         let openCluster: HoppedCluster | null = null;
         for await (const { at, el, window } of hopTopLevel(reading, pos)) {
-          // An id the hop does not know may be a damaged Cluster, and skipping it would serve the file a cluster short.
-          if (!TOP_LEVEL_IDS.has(el.id)) {
-            refused = true;
-            queue.halt();
-            return;
-          }
           if (el.id === E.ID.segment.CLUSTER) {
             if ("open" in el) {
               openCluster = {
@@ -224,8 +218,6 @@ const CLUSTER_CHILD_IDS = new Set<number>([
 ]);
 
 const SEGMENT_CHILD_IDS = new Set<number>(Object.values(E.ID.segment));
-
-const TOP_LEVEL_IDS = new Set<number>([...SEGMENT_CHILD_IDS, ...Object.values(E.ID.global)]);
 
 /** How many clusters per lane the walk may find ahead of the one it hands over next. */
 const CLUSTERS_AHEAD_PER_LANE = 4;
