@@ -1,10 +1,8 @@
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
+import type { Range } from "../io/source.js";
 import { headerNeed } from "./chain.js";
 import type { Undo } from "./encoding.js";
-
-/** The walk buys a block's bytes; the index finds them in held windows, or throws a GrammarError. */
-export type BytesSupply = (at: number, need: number) => Promise<Window>;
 
 /** How a chosen track's frames are undone. */
 export interface FrameClaim {
@@ -17,6 +15,15 @@ export interface BlockFrame {
   startTicks: number;
   durationTicks: number | null;
   payload: Uint8Array;
+}
+
+/** A block's frame as the file stores it, with the undo its track's claim names. */
+export interface StoredFrame {
+  trackNumber: number;
+  startTicks: number;
+  durationTicks: number | null;
+  stored: Uint8Array;
+  undo: Undo | null;
 }
 
 interface BlockHead {
@@ -56,17 +63,16 @@ export const FRAME_IDS: ReadonlySet<number> = new Set([
 ]);
 
 /**
- * One block element as a frame, or null for a track `claims` does not hold.
+ * One block element's frame as stored, null for a track `claims` does not hold, or the clause of a rule it breaks.
  *
- * A block that breaks a rule answers that rule's clause.
+ * Each range it yields is to be answered with a window that holds it.
  */
-export async function frameIn(
+export function* blockSteps(
   outer: Element,
   clusterTicks: number,
   held: Window,
   claims: ReadonlyMap<number, FrameClaim>,
-  supply: BytesSupply,
-): Promise<BlockFrame | null | BlockClause> {
+): Generator<Range, StoredFrame | null | BlockClause, Window> {
   let window = held;
   let body = outer.body;
   let size = outer.size;
@@ -74,14 +80,14 @@ export async function frameIn(
   if (outer.id === E.ID.cluster.BLOCK_GROUP) {
     const probeBytes = Math.min(outer.size, BLOCK_GROUP_PROBE_BYTES);
     if (!E.covers(window, outer.body, probeBytes)) {
-      window = await supply(outer.body, probeBytes);
+      window = yield { at: outer.body, length: probeBytes };
     }
     let inner: Element | null = null;
     let pos = outer.body;
     while (pos < outer.next) {
       const need = headerNeed(pos, outer.next);
       if (!E.covers(window, pos, need)) {
-        window = await supply(pos, need);
+        window = yield { at: pos, length: need };
       }
       const field = E.readElement(window, pos);
       if (!E.fits(field, outer.next)) return BLOCK_REFUSAL.groupChildren;
@@ -89,8 +95,9 @@ export async function frameIn(
         inner = field;
       } else if (field.id === E.ID.blockGroup.BLOCK_DURATION) {
         if (E.uintFits(field.size)) {
-          const held = E.covers(window, field.body, field.size);
-          const covering = held ? window : await supply(field.body, field.size);
+          const covering = E.covers(window, field.body, field.size)
+            ? window
+            : yield { at: field.body, length: field.size };
           durationTicks = E.readUint(covering, field);
         }
       }
@@ -102,7 +109,7 @@ export async function frameIn(
   }
   const need = Math.min(MAX_BLOCK_HEAD_BYTES, size);
   if (!E.covers(window, body, need)) {
-    window = await supply(body, need);
+    window = yield { at: body, length: need };
   }
   const blockHead = readBlockHead(window, body, size);
   if (typeof blockHead === "string") return blockHead;
@@ -113,15 +120,30 @@ export async function frameIn(
   if (fault !== null) return fault;
   const covering = E.covers(window, blockHead.payloadAt, blockHead.payloadSize)
     ? window
-    : await supply(blockHead.payloadAt, blockHead.payloadSize);
+    : yield { at: blockHead.payloadAt, length: blockHead.payloadSize };
   const stored = E.readBytes(covering, blockHead.payloadAt, blockHead.payloadSize);
+  const startTicks = clusterTicks + blockHead.relTicks;
+  return { trackNumber, startTicks, durationTicks, stored, undo: claim.undo };
+}
+
+export function plainFrame(frame: StoredFrame): BlockFrame {
+  const { trackNumber, startTicks, durationTicks, stored } = frame;
+  const payload = stored.slice();
+  return { trackNumber, startTicks, durationTicks, payload };
+}
+
+export async function undoneFrame(
+  frame: StoredFrame,
+  undo: Undo,
+): Promise<BlockFrame | BlockClause> {
+  const { trackNumber, startTicks, durationTicks, stored } = frame;
+  const undoing = undo(stored);
   let payload: Uint8Array;
   try {
-    payload = claim.undo === null ? stored.slice() : await claim.undo(stored);
+    payload = await undoing;
   } catch {
     return BLOCK_REFUSAL.undecodable;
   }
-  const startTicks = clusterTicks + blockHead.relTicks;
   return { trackNumber, startTicks, durationTicks, payload };
 }
 

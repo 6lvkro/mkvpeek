@@ -15,9 +15,11 @@ import {
   BLOCK_REFUSAL,
   type BlockClause,
   type BlockFrame,
+  blockSteps,
   FRAME_IDS,
   type FrameClaim,
-  frameIn,
+  plainFrame,
+  undoneFrame,
 } from "./block.js";
 import { CLUSTER_PROBE_BYTES, hopTopLevel, readClusterTicks, type SegmentPass } from "./chain.js";
 
@@ -294,7 +296,6 @@ async function walkSpan(
   const frames: BlockFrame[] = [];
   let pos = span.el.body;
   const supply = async (at: number, need: number) => {
-    if (E.covers(carried, at, need)) return carried;
     const width = widthFor(at, need);
     const window = await fetchWindow(at, width);
     if (E.reachOf(window) > E.reachOf(carried)) {
@@ -304,7 +305,7 @@ async function walkSpan(
   };
   while (pos < span.end) {
     const need = Math.min(BLOCK_PROBE_BYTES, span.end - pos);
-    const window = await supply(pos, need);
+    const window = E.covers(carried, pos, need) ? carried : await supply(pos, need);
     const el = E.readElement(window, pos);
     if (typeof el === "string") return BLOCK_REFUSAL.notAnElement;
     if (!CLUSTER_CHILD_IDS.has(el.id)) {
@@ -313,9 +314,20 @@ async function walkSpan(
     }
     if (!E.fits(el, span.end)) return BLOCK_REFUSAL.runsPastCluster;
     if (FRAME_IDS.has(el.id)) {
-      const frame = await frameIn(el, clusterTicks, window, claims, supply);
-      if (typeof frame === "string") return frame;
-      if (frame !== null) frames.push(frame);
+      const steps = blockSteps(el, clusterTicks, window, claims);
+      let step = steps.next();
+      while (step.done !== true) {
+        const bought = await supply(step.value.at, step.value.length);
+        step = steps.next(bought);
+      }
+      const stored = step.value;
+      if (typeof stored === "string") return stored;
+      if (stored !== null) {
+        const frame =
+          stored.undo === null ? plainFrame(stored) : await undoneFrame(stored, stored.undo);
+        if (typeof frame === "string") return frame;
+        frames.push(frame);
+      }
     }
     pos = el.next;
   }

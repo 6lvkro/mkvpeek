@@ -5,12 +5,11 @@ import type { WindowIndex } from "../io/windows.js";
 import {
   BLOCK_REFUSAL,
   type BlockClause,
-  type BlockFrame,
-  type BytesSupply,
+  blockSteps,
   FRAME_IDS,
   type FrameClaim,
-  frameIn,
   heldBlockHead,
+  type StoredFrame,
 } from "./block.js";
 import {
   CLUSTER_PROBE_BYTES,
@@ -45,13 +44,13 @@ interface LastCluster {
   window: Window;
 }
 
-export async function readFrame(
+export function readFrame(
   windows: WindowIndex,
   point: CuePosition,
   trackNumber: number,
   claim: FrameClaim,
   memo: ClusterMemo,
-): Promise<BlockFrame | BlockClause> {
+): StoredFrame | BlockClause {
   const pointed = locateBlock(windows, point, memo);
   if (typeof pointed === "string") return pointed;
   const { clusterTicks, window, outer } = pointed;
@@ -66,7 +65,7 @@ export function readCuedFrame(
   cued: CuedBlock,
   trackNumber: number,
   claim: FrameClaim,
-): Promise<BlockFrame | BlockClause> {
+): StoredFrame | BlockClause {
   const { outer, clusterTicks, window } = cued;
   return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, claim);
 }
@@ -153,27 +152,23 @@ const unheldBlock = (windows: WindowIndex, blockAt: number, outer: Element): Ran
     ? { at: blockAt, length: outer.next - blockAt }
     : null;
 
-async function frameOfBlock(
+function frameOfBlock(
   windows: WindowIndex,
   outer: Element,
   clusterTicks: number,
   held: Window,
   trackNumber: number,
   claim: FrameClaim,
-): Promise<BlockFrame | BlockClause> {
+): StoredFrame | BlockClause {
   const claims = new Map([[trackNumber, claim]]);
-  const supply: BytesSupply = (at, need) => {
-    const window = windows.find(at, need);
-    if (window === null) throw new E.GrammarError();
-    return Promise.resolve(window);
-  };
-  try {
-    const frame = await frameIn(outer, clusterTicks, held, claims, supply);
-    return frame ?? BLOCK_REFUSAL.notThisTrack;
-  } catch (error) {
-    if (!E.isGrammarError(error)) throw error;
-    return BLOCK_REFUSAL.notFetched;
+  const steps = blockSteps(outer, clusterTicks, held, claims);
+  let step = steps.next();
+  while (step.done !== true) {
+    const window = windows.find(step.value.at, step.value.length);
+    if (window === null) return BLOCK_REFUSAL.notFetched;
+    step = steps.next(window);
   }
+  return step.value ?? BLOCK_REFUSAL.notThisTrack;
 }
 
 function locateBlock(

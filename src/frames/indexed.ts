@@ -9,6 +9,7 @@ import {
   type Watch,
 } from "../io/source.js";
 import { coalesceAcross, fetchSpans, WindowIndex } from "../io/windows.js";
+import { plainFrame, undoneFrame } from "../matroska/block.js";
 import { CLUSTER_PROBE_BYTES } from "../matroska/chain.js";
 import {
   type ClusterMemo,
@@ -312,10 +313,13 @@ async function readRound(
     const { claim, cue } = slice[i] as PlannedCue;
     const { number, index } = claim.entry;
     const cued = timed[i];
-    const frame =
+    const stored =
       cued === undefined
-        ? await readFrame(windows, cue, number, claim, memo)
-        : await readCuedFrame(windows, cued, number, claim);
+        ? readFrame(windows, cue, number, claim, memo)
+        : readCuedFrame(windows, cued, number, claim);
+    if (typeof stored === "string") throw new RefusalError("unreadable");
+    const frame =
+      stored.undo === null ? plainFrame(stored) : await undoneFrame(stored, stored.undo);
     if (typeof frame === "string") throw new RefusalError("unreadable");
     frames.push(frameOn(frame, index, timeline));
   }
