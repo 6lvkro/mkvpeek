@@ -1,18 +1,15 @@
 import type { Frame } from "../frames/contract.js";
+import type { Assembler, Spool } from "./spool.js";
 
-export function assembleSup(frames: readonly Frame[]): Uint8Array {
-  const parts: Uint8Array[] = [];
-  for (const frame of frames) {
+export function startSup(out: Spool): Assembler {
+  const add = (frame: Frame) => {
     const head = supHead(Math.round(frame.startMs * SUP_TICKS_PER_MS));
-    for (const segment of segmentsOf(frame.data)) parts.push(head, segment);
-  }
-  const file = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
-  let at = 0;
-  for (const part of parts) {
-    file.set(part, at);
-    at += part.length;
-  }
-  return file;
+    for (const segment of segmentsOf(frame.data)) {
+      out.put(head);
+      out.put(segment);
+    }
+  };
+  return { add };
 }
 
 /** "PG", then the PTS and the DTS, ahead of each segment of a .sup file. */

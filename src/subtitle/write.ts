@@ -1,11 +1,13 @@
 import type { Container } from "../container/contract.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
+import type { Bytes } from "../vocabulary.js";
 import type { SubtitleFile, SubtitleFormat } from "./contract.js";
-import { assembleSrt } from "./srt.js";
-import { assembleSubstation, substationScript } from "./substation.js";
-import { assembleSup } from "./sup.js";
-import { assembleVtt } from "./vtt.js";
+import { type Assembler, Spool } from "./spool.js";
+import { startSrt } from "./srt.js";
+import { startSubstation, substationScript } from "./substation.js";
+import { startSup } from "./sup.js";
+import { startVtt } from "./vtt.js";
 
 export interface SubtitleOptions extends FrameOptions {
   /**
@@ -23,7 +25,7 @@ export interface SubtitleOptions extends FrameOptions {
  * VobSub, a codec it does not know, or a SubStation track whose `codecPrivate` is null.
  */
 export function subtitleFormat(track: Track): SubtitleFormat | null {
-  return writerOf(track)?.format ?? null;
+  return assemblyOf(track)?.format ?? null;
 }
 
 /**
@@ -34,13 +36,13 @@ export function subtitleFormat(track: Track): SubtitleFormat | null {
  * @example
  * const frames = await Array.fromAsync(container.frames([track]));
  * const sub = subtitleFile(track, frames);
- * if (sub !== null) await writeFile(`${name}.${sub.format}`, sub.bytes);
+ * if (sub !== null) use(track, sub.format, sub.bytes);
  */
 export function subtitleFile(track: Track, frames: readonly Frame[]): SubtitleFile | null {
-  const writer = writerOf(track);
-  if (writer === null) return null;
-  const own = frames.filter((frame) => frame.trackIndex === track.index && frame.data.length > 0);
-  return { track, format: writer.format, bytes: writer.write(own) };
+  const draft = draftOf(track);
+  if (draft === null) return null;
+  for (const frame of frames) draft.add(frame);
+  return filed(track, draft);
 }
 
 /**
@@ -49,9 +51,7 @@ export function subtitleFile(track: Track, frames: readonly Frame[]): SubtitleFi
  * It writes nothing where that read is refused.
  *
  * @example
- * for (const { track, format, bytes } of await subtitleFiles(container)) {
- *   await writeFile(`${track.index}.${format}`, bytes);
- * }
+ * for (const { track, format, bytes } of await subtitleFiles(container)) use(track, format, bytes);
  */
 export async function subtitleFiles(
   container: Container,
@@ -61,14 +61,55 @@ export async function subtitleFiles(
   const written = container.tracks.filter(
     (track) => formats.has(subtitleFormat(track)) && container.readable(track),
   );
-  const frames: Frame[] = [];
-  for await (const frame of container.frames(written, options)) frames.push(frame);
-  return written.map((track) => subtitleFile(track, frames) as SubtitleFile);
+  const drafts = new Map<number, Draft>();
+  for (const track of written) {
+    const draft = draftOf(track) as Draft;
+    drafts.set(track.index, draft);
+  }
+  for await (const frame of container.frames(written, options)) {
+    const draft = drafts.get(frame.trackIndex) as Draft;
+    draft.add(frame);
+  }
+  return written.map((track) => {
+    const draft = drafts.get(track.index) as Draft;
+    return filed(track, draft);
+  });
 }
 
-interface Writer {
+/**
+ * Writes a track out as its frames come, for a file too large to hold whole.
+ *
+ * Null where `subtitleFormat` is.
+ *
+ * - It may hold a frame's bytes until the frames end, so the frame's buffer stays as given until then.
+ *
+ * @example
+ * const sub = subtitleStream(track, container.frames([track], { via: "walk" }));
+ * if (sub !== null) {
+ *   await pipeline(sub.bytes, createWriteStream(`${track.index}.${sub.format}`));
+ * }
+ */
+export function subtitleStream(
+  track: Track,
+  frames: AsyncIterable<Frame>,
+): SubtitleFile<AsyncIterable<Bytes>> | null {
+  const draft = draftOf(track);
+  if (draft === null) return null;
+  return { track, format: draft.format, bytes: streamed(draft, frames) };
+}
+
+interface Assembly {
   format: SubtitleFormat;
-  write: (frames: readonly Frame[]) => Uint8Array;
+  start: (out: Spool) => Assembler;
+}
+
+/** A track's file as its frames come. */
+interface Draft {
+  format: SubtitleFormat;
+  add(frame: Frame): void;
+  end(): void;
+  drain(): Uint8Array<ArrayBuffer>;
+  waiting(): number;
 }
 
 const TEXT_FORMATS: ReadonlySet<SubtitleFormat> = new Set<SubtitleFormat>([
@@ -80,6 +121,9 @@ const TEXT_FORMATS: ReadonlySet<SubtitleFormat> = new Set<SubtitleFormat>([
 
 const FORMATS: ReadonlySet<SubtitleFormat> = new Set<SubtitleFormat>([...TEXT_FORMATS, "sup"]);
 
+/** What a stream gathers before it hands a piece on, as each piece costs its consumer a write. */
+const PIECE_BYTES = 64 * 1024;
+
 function formatsNamed(formats: readonly SubtitleFormat[] | undefined): ReadonlySet<SubtitleFormat> {
   const named = new Set(formats ?? TEXT_FORMATS);
   for (const format of named) {
@@ -88,28 +132,60 @@ function formatsNamed(formats: readonly SubtitleFormat[] | undefined): ReadonlyS
   return named;
 }
 
-function writerOf(track: Track): Writer | null {
+function assemblyOf(track: Track): Assembly | null {
   switch (track.codecId) {
     case "S_TEXT/ASS":
     case "S_TEXT/SSA":
     case "S_SSA":
     case "S_ASS":
-      return substationWriter(track);
+      return substationAssembly(track);
     case "S_TEXT/UTF8":
-      return { format: "srt", write: assembleSrt };
+      return { format: "srt", start: startSrt };
     case "D_WEBVTT/SUBTITLES":
     case "D_WEBVTT/CAPTIONS":
-      return { format: "vtt", write: assembleVtt };
+      return { format: "vtt", start: startVtt };
     case "S_HDMV/PGS":
-      return { format: "sup", write: assembleSup };
+      return { format: "sup", start: startSup };
     default:
       return null;
   }
 }
 
-function substationWriter(track: Track): Writer | null {
+function substationAssembly(track: Track): Assembly | null {
   const script = substationScript(track);
   if (script === null) return null;
-  const write = (frames: readonly Frame[]) => assembleSubstation(script, frames);
-  return { format: script.format, write };
+  return { format: script.format, start: (out) => startSubstation(script, out) };
+}
+
+function draftOf(track: Track): Draft | null {
+  const assembly = assemblyOf(track);
+  if (assembly === null) return null;
+  const out = new Spool();
+  const assembler = assembly.start(out);
+  const add = (frame: Frame) => {
+    const own = frame.trackIndex === track.index && frame.data.length > 0;
+    if (own) assembler.add(frame);
+  };
+  const end = () => assembler.end?.();
+  return {
+    format: assembly.format,
+    add,
+    end,
+    drain: () => out.drain(),
+    waiting: () => out.waiting,
+  };
+}
+
+function filed(track: Track, draft: Draft): SubtitleFile {
+  draft.end();
+  return { track, format: draft.format, bytes: draft.drain() };
+}
+
+async function* streamed(draft: Draft, frames: AsyncIterable<Frame>): AsyncGenerator<Bytes> {
+  for await (const frame of frames) {
+    draft.add(frame);
+    if (draft.waiting() >= PIECE_BYTES) yield draft.drain();
+  }
+  draft.end();
+  if (draft.waiting() > 0) yield draft.drain();
 }

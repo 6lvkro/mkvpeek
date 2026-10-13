@@ -42,6 +42,9 @@ export interface TrackTag {
   value: string;
 }
 
+/** A `Uint8Array` over an `ArrayBuffer` of its own. */
+export type Bytes = ReturnType<Uint8Array["slice"]>;
+
 /**
  * The reasons a requested read could not be completed.
  *

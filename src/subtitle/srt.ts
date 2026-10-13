@@ -1,13 +1,17 @@
 import type { Frame } from "../frames/contract.js";
-import { clockFields, ENCODER, MS_PER_SECOND, padded, timesOf, UTF8 } from "./text.js";
+import type { Assembler, Spool } from "./spool.js";
+import { clockFields, MS_PER_SECOND, padded, timesOf, UTF8 } from "./text.js";
 
-export function assembleSrt(frames: readonly Frame[]): Uint8Array {
-  const events = frames.map((frame, i) => {
+export function startSrt(out: Spool): Assembler {
+  let number = 0;
+  const add = (frame: Frame) => {
+    number += 1;
     const [start, end] = timesOf(frame, 1);
     const payload = UTF8.decode(frame.data);
-    return `${String(i + 1)}\n${srtTime(start)} --> ${srtTime(end)}\n${payload}\n\n`;
-  });
-  return ENCODER.encode(events.join(""));
+    const event = `${String(number)}\n${srtTime(start)} --> ${srtTime(end)}\n${payload}\n\n`;
+    out.write(event);
+  };
+  return { add };
 }
 
 function srtTime(ms: number): string {

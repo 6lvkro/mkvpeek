@@ -1,5 +1,6 @@
 import type { Frame } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
+import type { Assembler, Spool } from "./spool.js";
 import { clockFields, ENCODER, MS_PER_SECOND, timesOf, UTF8 } from "./text.js";
 
 interface Script {
@@ -15,10 +16,7 @@ export function substationScript(track: Track): Script | null {
   return { text, format };
 }
 
-export function assembleSubstation(
-  { text: script, format }: Script,
-  frames: readonly Frame[],
-): Uint8Array {
+export function startSubstation({ text: script, format }: Script, out: Spool): Assembler {
   const searched = cString(script);
   const eventsAt = searched.indexOf("\n[Events]");
   const formatAt = eventsAt < 0 ? -1 : searched.indexOf("Format:", eventsAt);
@@ -29,26 +27,22 @@ export function assembleSubstation(
     script !== "" && eventsAt < 0
       ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n`
       : "";
-  const dialogues = frames.map((frame) => dialogueOf(frame, format));
-  const written = inReadOrder(dialogues);
   const headText = `${lines(script.slice(0, headEnd))}${added}`;
-  const head = ENCODER.encode(headText);
   const trailerText = lines(script.slice(headEnd));
-  const trailer = ENCODER.encode(trailerText);
   const opening = format === "ass" ? "Dialogue: " : `Dialogue: ${MARKED_PREFIX}`;
-  let size = head.length + trailer.length;
-  for (const { layer, start, end, text } of written) {
-    size += opening.length + layer.length + timeBytes(start) + timeBytes(end) + text.length;
-    size += LINE_PUNCTUATION_BYTES;
-  }
-  const file = new Uint8Array(size);
-  file.set(head);
-  let at = head.length;
-  for (const dialogue of written) {
-    at = writeDialogue(file, at, opening, dialogue);
-  }
-  file.set(trailer, at);
-  return file;
+  out.write(headText);
+  const order = new ReadOrder();
+  const add = (frame: Frame) => {
+    const dialogue = dialogueOf(frame, format);
+    const released = order.admit(dialogue);
+    writeDialogues(out, opening, released);
+  };
+  const end = () => {
+    const rest = order.drain();
+    writeDialogues(out, opening, rest);
+    out.write(trailerText);
+  };
+  return { add, end };
 }
 
 interface Dialogue {
@@ -71,6 +65,36 @@ interface LeadingNumber {
 
 /** A C long, held as a number wherever a double holds it exactly. */
 type CLong = number | bigint;
+
+/** Lines in ReadOrder, each queued until every ReadOrder before it is out. */
+class ReadOrder {
+  readonly #queue: QueuedDialogue[] = [];
+  #expected = 0;
+  #arrivals = 0;
+
+  admit(dialogue: Dialogue): Dialogue[] {
+    const arrival = this.#arrivals;
+    this.#arrivals += 1;
+    if (this.#queue.length === 0 && dialogue.order === this.#expected) {
+      this.#expected += 1;
+      return [dialogue];
+    }
+    const queued = { ...dialogue, arrival };
+    enqueue(this.#queue, queued);
+    const released = [];
+    while (this.#queue[0]?.order === this.#expected) {
+      released.push(dequeue(this.#queue));
+      this.#expected += 1;
+    }
+    return released;
+  }
+
+  drain(): Dialogue[] {
+    const rest = [];
+    while (this.#queue.length > 0) rest.push(dequeue(this.#queue));
+    return rest;
+  }
+}
 
 const CS_PER_SECOND = 100;
 const MS_PER_CS = MS_PER_SECOND / CS_PER_SECOND;
@@ -225,29 +249,6 @@ function isUtf8(bytes: Uint8Array): boolean {
   return needed === 0;
 }
 
-/** Lines in ReadOrder, each queued until every ReadOrder before it is out. */
-function inReadOrder(dialogues: readonly Dialogue[]): Dialogue[] {
-  const written: Dialogue[] = [];
-  const queue: QueuedDialogue[] = [];
-  let expected = 0;
-  for (let arrival = 0; arrival < dialogues.length; arrival += 1) {
-    const dialogue = dialogues[arrival] as Dialogue;
-    if (queue.length === 0 && dialogue.order === expected) {
-      written.push(dialogue);
-      expected += 1;
-      continue;
-    }
-    const queued: QueuedDialogue = { ...dialogue, arrival };
-    enqueue(queue, queued);
-    while (queue[0]?.order === expected) {
-      written.push(dequeue(queue));
-      expected += 1;
-    }
-  }
-  while (queue.length > 0) written.push(dequeue(queue));
-  return written;
-}
-
 /** The queue is a heap whose root goes out first. */
 function enqueue(heap: QueuedDialogue[], queued: QueuedDialogue): void {
   heap.push(queued);
@@ -290,43 +291,55 @@ function dequeue(heap: QueuedDialogue[]): QueuedDialogue {
   }
 }
 
-function writeDialogue(file: Uint8Array, at: number, opening: string, dialogue: Dialogue): number {
+function writeDialogues(out: Spool, opening: string, dialogues: readonly Dialogue[]): void {
+  let size = 0;
+  for (const { layer, start, end, text } of dialogues) {
+    size += opening.length + layer.length + timeBytes(start) + timeBytes(end) + text.length;
+    size += LINE_PUNCTUATION_BYTES;
+  }
+  let at = out.reserve(size);
+  for (const dialogue of dialogues) {
+    at = writeDialogue(out.chunk, at, opening, dialogue);
+  }
+}
+
+function writeDialogue(bytes: Uint8Array, at: number, opening: string, dialogue: Dialogue): number {
   const { layer, start, end, text } = dialogue;
-  let next = writeAscii(file, at, opening);
-  next = writeAscii(file, next, layer);
-  file[next] = COMMA;
-  next = writeTime(file, next + 1, start);
-  file[next] = COMMA;
-  next = writeTime(file, next + 1, end);
-  file[next] = COMMA;
-  file.set(text, next + 1);
+  let next = writeAscii(bytes, at, opening);
+  next = writeAscii(bytes, next, layer);
+  bytes[next] = COMMA;
+  next = writeTime(bytes, next + 1, start);
+  bytes[next] = COMMA;
+  next = writeTime(bytes, next + 1, end);
+  bytes[next] = COMMA;
+  bytes.set(text, next + 1);
   next += 1 + text.length;
-  file[next] = LF;
+  bytes[next] = LF;
   return next + 1;
 }
 
-function writeAscii(file: Uint8Array, at: number, ascii: string): number {
+function writeAscii(bytes: Uint8Array, at: number, ascii: string): number {
   for (let k = 0; k < ascii.length; k += 1) {
-    file[at + k] = ascii.charCodeAt(k);
+    bytes[at + k] = ascii.charCodeAt(k);
   }
   return at + ascii.length;
 }
 
-function writeTime(file: Uint8Array, at: number, cs: number): number {
-  if (Number.isNaN(cs)) return writeAscii(file, at, NAN_TIME);
+function writeTime(bytes: Uint8Array, at: number, cs: number): number {
+  if (Number.isNaN(cs)) return writeAscii(bytes, at, NAN_TIME);
   const capped = Math.min(cs, LAST_SUBSTATION_CS);
   const { hours, minutes, seconds, fraction } = clockFields(capped, CS_PER_SECOND);
-  file[at] = ZERO + hours;
-  file[at + 1] = COLON;
-  writeTwoDigits(file, at + 2, minutes);
-  file[at + 4] = COLON;
-  writeTwoDigits(file, at + 5, seconds);
-  file[at + 7] = DOT;
-  writeTwoDigits(file, at + 8, fraction);
+  bytes[at] = ZERO + hours;
+  bytes[at + 1] = COLON;
+  writeTwoDigits(bytes, at + 2, minutes);
+  bytes[at + 4] = COLON;
+  writeTwoDigits(bytes, at + 5, seconds);
+  bytes[at + 7] = DOT;
+  writeTwoDigits(bytes, at + 8, fraction);
   return at + TIME_BYTES;
 }
 
-function writeTwoDigits(file: Uint8Array, at: number, value: number): void {
-  file[at] = ZERO + Math.floor(value / 10);
-  file[at + 1] = ZERO + (value % 10);
+function writeTwoDigits(bytes: Uint8Array, at: number, value: number): void {
+  bytes[at] = ZERO + Math.floor(value / 10);
+  bytes[at + 1] = ZERO + (value % 10);
 }

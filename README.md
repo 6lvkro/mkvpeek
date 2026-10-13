@@ -49,14 +49,11 @@ const { tracks, info } = await peekTracks("video.mkv");
 ```
 
 ```ts
-import { writeFile } from "node:fs/promises";
 import { openContainer, RefusalError, subtitleFiles } from "mkvpeek";
 
 try {
   await using container = await openContainer("video.mkv");
-  for (const { track, format, bytes } of await subtitleFiles(container)) {
-    await writeFile(`${track.index}.${format}`, bytes);
-  }
+  for (const { track, format, bytes } of await subtitleFiles(container)) use(track, format, bytes);
 } catch (error) {
   if (!(error instanceof RefusalError)) throw error;
   // error.code says why
@@ -69,13 +66,13 @@ In plain JavaScript there, close the container in a `finally`.
 ```ts
 const container = await openContainer("video.mkv");
 try {
-  for (const { track, format, bytes } of await subtitleFiles(container)) {
-    await writeFile(`${track.index}.${format}`, bytes);
-  }
+  for (const { track, format, bytes } of await subtitleFiles(container)) use(track, format, bytes);
 } finally {
   await container.close();
 }
 ```
+
+To write a track out as its frames come, rather than hold its file, use `subtitleStream`.
 
 Request options such as headers go through `urlSource`.
 

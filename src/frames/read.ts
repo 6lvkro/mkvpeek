@@ -37,7 +37,9 @@ export async function* framesOf(
         },
       );
       if (indexed !== null) {
-        for (const frame of indexed) {
+        // Popped, so each frame is let go as it is handed over.
+        const pending = indexed.reverse();
+        for (let frame = pending.pop(); frame !== undefined; frame = pending.pop()) {
           stopIfAborted(signal);
           yield frame;
         }

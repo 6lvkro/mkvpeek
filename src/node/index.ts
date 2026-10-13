@@ -9,6 +9,7 @@ export type {
   AsyncDisposal,
   Attachment,
   BlobOptions,
+  Bytes,
   Container,
   ContainerInfo,
   Frame,
@@ -38,6 +39,7 @@ export {
   subtitleFile,
   subtitleFiles,
   subtitleFormat,
+  subtitleStream,
   worthFallback,
 } from "../index.js";
 export { openContainer, peekTracks } from "./entry.js";

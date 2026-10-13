@@ -1,15 +1,10 @@
 import type { Frame } from "../frames/contract.js";
-import { clockFields, ENCODER, MS_PER_SECOND, padded, timesOf, UTF8 } from "./text.js";
+import type { Assembler, Spool } from "./spool.js";
+import { clockFields, MS_PER_SECOND, padded, timesOf, UTF8 } from "./text.js";
 
-export function assembleVtt(frames: readonly Frame[]): Uint8Array {
-  const cues = frames.map((frame) => {
-    const { id, settings, text } = vttCueOf(UTF8.decode(frame.data));
-    const [start, end] = timesOf(frame, 1);
-    const idLine = id === "" ? "" : `${id}\n`;
-    const timingTail = settings === "" ? "" : ` ${settings}`;
-    return `\n${idLine}${vttTime(start)} --> ${vttTime(end)}${timingTail}\n${text}\n`;
-  });
-  return ENCODER.encode(`WEBVTT\n${cues.join("")}`);
+export function startVtt(out: Spool): Assembler {
+  out.write("WEBVTT\n");
+  return { add: (frame) => out.write(cueBlock(frame)) };
 }
 
 interface VttCue {
@@ -24,6 +19,14 @@ function lineEndsTrimmed(text: string): string {
     end -= 1;
   }
   return text.slice(0, end);
+}
+
+function cueBlock(frame: Frame): string {
+  const { id, settings, text } = vttCueOf(UTF8.decode(frame.data));
+  const [start, end] = timesOf(frame, 1);
+  const idLine = id === "" ? "" : `${id}\n`;
+  const timingTail = settings === "" ? "" : ` ${settings}`;
+  return `\n${idLine}${vttTime(start)} --> ${vttTime(end)}${timingTail}\n${text}\n`;
 }
 
 function vttCueOf(payload: string): VttCue {
