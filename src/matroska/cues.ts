@@ -135,16 +135,6 @@ export function locateByCue(
   return cued;
 }
 
-export function agreesWithCluster(
-  windows: WindowIndex,
-  point: CuePosition,
-  cued: CuedBlock,
-): boolean {
-  const pointed = locateBlock(windows, point, { last: null });
-  if (typeof pointed === "string") return false;
-  return pointed.blockAt === cued.blockAt && pointed.clusterTicks === cued.clusterTicks;
-}
-
 interface PointedBlock {
   clusterTicks: number | null;
   window: Window;

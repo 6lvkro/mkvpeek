@@ -57,7 +57,7 @@ export interface FrameOptions extends FrameTuning, Abortable {
   via?: FrameVia;
   /**
    * Reads by the index only a track that states its frame count,
-   * and checks every cluster it reads against the cluster's own timestamp.
+   * and dates every frame by its cluster's own timestamp rather than its cue's.
    *
    * A track it cannot prove whole goes to the walk under `both`, and is refused under `index`.
    */

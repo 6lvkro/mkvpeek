@@ -114,7 +114,7 @@ Output is verified against ffprobe and ffmpeg, with four deliberate exceptions.
 - **A WebVTT block that does not split the way ffmpeg splits one:** ffmpeg drops the cue; the package keeps it.
 - **Media that does not start where the first cluster does:** every timestamp differs from ffmpeg's by that gap.
 
-Anything else the spec defines that a served read distorts or loses is a bug, apart from what a short `Cues` list hides by default; under `strict`, only these four remain.
+Anything else the spec defines that a served read distorts or loses is a bug, apart from what a short `Cues` list hides or a wrong `CueTime` misdates by default; under `strict`, only these four remain.
 
 ## License
 
