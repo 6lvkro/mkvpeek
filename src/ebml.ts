@@ -193,16 +193,6 @@ export function vintValue(
   return value;
 }
 
-/** The all-ones shape of a size vint, which means the size is unknown. */
-export function vintAllOnes(bytes: Uint8Array, start: number, length: number): boolean {
-  const leadValueBits = ALL_BITS >> length;
-  if (((bytes[start] as number) & leadValueBits) !== leadValueBits) return false;
-  for (let i = 1; i < length; i++) {
-    if (bytes[start + i] !== ALL_BITS) return false;
-  }
-  return true;
-}
-
 export function uintValue(bytes: Uint8Array, start: number, size: number): number {
   let value = 0;
   for (let i = 0; i < size; i++) {
@@ -250,8 +240,7 @@ export function readFloat(window: Window, el: Element): number | null {
   return null;
 }
 
-export function readUint(window: Window, el: Element): number | null {
-  if (!uintFits(el.size)) return null;
+export function readUint(window: Window, el: Element): number {
   const start = offsetOf(window, el.body, el.size);
   if (start < 0) throw new GrammarError();
   return uintValue(window.bytes, start, el.size);
@@ -264,7 +253,7 @@ export function readUid(window: Window, el: Element): string | null {
     hex += byte.toString(16).padStart(2, "0");
   }
   const trimmed = hex.replace(/^0+/, "");
-  return trimmed === "" ? null : trimmed;
+  return trimmed === "" ? "0" : trimmed;
 }
 
 export function readAscii(window: Window, el: Element): string {
@@ -309,6 +298,16 @@ function heldVintLength(window: Window, at: number): number {
   const length = vintLength(window.bytes[start] as number);
   if (length > MAX_VINT_BYTES) return 0;
   return offsetOf(window, at, length) < 0 ? 0 : length;
+}
+
+/** The all-ones shape of a size vint, which means the size is unknown. */
+function vintAllOnes(bytes: Uint8Array, start: number, length: number): boolean {
+  const leadValueBits = ALL_BITS >> length;
+  if (((bytes[start] as number) & leadValueBits) !== leadValueBits) return false;
+  for (let i = 1; i < length; i++) {
+    if (bytes[start + i] !== ALL_BITS) return false;
+  }
+  return true;
 }
 
 /**

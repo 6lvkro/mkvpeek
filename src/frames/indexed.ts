@@ -139,9 +139,6 @@ function planFrames(
     if (!vouchable(claim, cues.length, strict)) {
       throw new RefusalError("unreadable");
     }
-    if (repeatedPosition(cues)) {
-      throw new RefusalError("unreadable");
-    }
     for (const cue of cues) planned.push({ claim, cue });
   }
   planned.sort((a, b) => a.cue.clusterPos - b.cue.clusterPos || a.cue.relPos - b.cue.relPos);
@@ -165,21 +162,6 @@ function stonesOf(
     .flatMap(([, positions]) => positions);
   const blocks = planBlockRanges(cues, cueAheadBytes);
   return unheld(blocks, file.head);
-}
-
-function repeatedPosition(cues: readonly CuePosition[]): boolean {
-  const seen = new Map<number, Set<number>>();
-  for (const { clusterPos, relPos } of cues) {
-    const inCluster = seen.get(clusterPos);
-    if (inCluster === undefined) {
-      const first = new Set([relPos]);
-      seen.set(clusterPos, first);
-      continue;
-    }
-    if (inCluster.has(relPos)) return true;
-    inCluster.add(relPos);
-  }
-  return false;
 }
 
 function clusterStartsOf(byTrack: CueIndex): number[] {

@@ -32,11 +32,6 @@ export const ELEMENT_HEADER_BYTES = 2 * E.MAX_VINT_BYTES;
 /** Enough to read a cluster's header and its Timestamp. */
 export const CLUSTER_PROBE_BYTES = 64;
 
-export const FRAME_IDS: ReadonlySet<number> = new Set([
-  E.ID.cluster.SIMPLE_BLOCK,
-  E.ID.cluster.BLOCK_GROUP,
-]);
-
 export const pastSegment = (el: Element, segment: Segment): boolean => el.next > segment.end;
 
 export const headerNeed = (at: number, end: number): number =>
@@ -80,7 +75,6 @@ export function readClusterTicks(window: Window, cluster: Element | OpenElement)
   try {
     for (const field of E.children(window, cluster.body, end - cluster.body)) {
       if (field.id === E.ID.cluster.TIMESTAMP) return E.readUint(window, field);
-      if (FRAME_IDS.has(field.id)) return null;
     }
   } catch {
     return null;

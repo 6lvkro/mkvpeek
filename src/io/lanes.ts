@@ -1,4 +1,4 @@
-import { onAbort, stopIfAborted, untilAborted } from "./source.js";
+import { onAbort, untilAborted } from "./source.js";
 
 type Gathered<T extends readonly (() => Promise<unknown>)[]> = {
   [K in keyof T]: Awaited<ReturnType<T[K]>>;
@@ -128,7 +128,6 @@ async function runWorkers<T>(
       const item = await take();
       if (item === null) return;
       try {
-        stopIfAborted(signal);
         if (!(await each(item))) {
           stop();
           return;

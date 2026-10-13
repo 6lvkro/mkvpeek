@@ -7,6 +7,7 @@ import {
   type BlockClause,
   type BlockFrame,
   type BytesSupply,
+  FRAME_IDS,
   type FrameClaim,
   frameIn,
   heldBlockHead,
@@ -14,7 +15,6 @@ import {
 import {
   CLUSTER_PROBE_BYTES,
   ELEMENT_HEADER_BYTES,
-  FRAME_IDS,
   headerNeed,
   readClusterTicks,
 } from "./chain.js";
@@ -205,8 +205,6 @@ function locateBlock(
     memo.last = last;
   }
   const { cluster, clusterTicks } = last;
-  if (relPos >= cluster.size) return BLOCK_REFUSAL.pastTheCluster;
-
   const blockAt = cluster.body + relPos;
   const need = headerNeed(blockAt, cluster.next);
   const held = last.window;

@@ -22,7 +22,7 @@ export interface Track<T extends TrackType = TrackType> {
   index: number;
   /** The container's TrackNumber. */
   number: number;
-  /** The TrackUID in hexadecimal, null where it is unstated, zero, or wider than eight bytes. */
+  /** The TrackUID in hexadecimal, null where it is unstated. */
   uid: string | null;
   /** The Matroska CodecID, such as `S_TEXT/ASS`. */
   codecId: string;
@@ -36,7 +36,6 @@ export interface Track<T extends TrackType = TrackType> {
   flags: TrackFlags;
   /** Frame times already account for the largest CodecDelay any track states. */
   codecDelayNs: number;
-  /** Empty when another track states the same TrackUID. */
   tags: TrackTag[];
 }
 
@@ -53,8 +52,8 @@ export const allTracks = (segment: OpenedSegment): Track[] =>
 export const trackTypeOf = (entry: TrackEntry): TrackType =>
   TYPE_BY_CODE.get(entry.typeCode) ?? "unknown";
 
-export const tagsOf = (segment: OpenedSegment, entry: TrackEntry): TrackTag[] =>
-  segment.trackTags.get(entry.uid) ?? [];
+export const tagsOf = ({ trackTags }: OpenedSegment, { uid }: TrackEntry): TrackTag[] =>
+  uid === null ? [] : (trackTags.get(uid) ?? []);
 
 /** The track an entry states, sharing the entry's bytes and objects. */
 export function trackOf(segment: OpenedSegment, entry: TrackEntry): Track {

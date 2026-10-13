@@ -30,7 +30,7 @@ function cueBlock(frame: Frame): string {
 }
 
 function vttCueOf(payload: string): VttCue {
-  const match = /^([^\r\n]*)(?:\r\n|\r(?!\n)|\n)([^\r\n]*)(?:\r\n|\r(?!\n)|\n)/.exec(payload);
+  const match = /^([^\r\n]*)\r?\n([^\r\n]*)\r?\n/.exec(payload);
   if (match === null) return { id: "", settings: "", text: lineEndsTrimmed(payload) };
   const id = match[1] as string;
   const settings = match[2] as string;

@@ -55,7 +55,7 @@ export interface OpenedSegment {
   offsets: Map<number, number>;
   trackEntries: TrackEntry[];
   /** The tags each track states, by TrackUID. */
-  trackTags: Map<string | null, TrackTag[]>;
+  trackTags: Map<string, TrackTag[]>;
 }
 
 export async function openSegment(
@@ -82,7 +82,7 @@ export async function openSegment(
   const { offsets, chained } = locateTopLevel(head, segment);
   const located: Located = { source, segment, head, signal, offsets };
   if (chained !== null) await placeChained(located, chained);
-  const noTags = new Map<string | null, TrackTag[]>();
+  const noTags = new Map<string, TrackTag[]>();
   const [fetchedTracks, trackTags] = await Promise.all([
     fetchElement(located, E.ID.segment.TRACKS),
     fetchedOptional(located, E.ID.segment.TAGS, noTags, parseTrackTags),
@@ -90,13 +90,11 @@ export async function openSegment(
   if (fetchedTracks === null) return "malformed";
 
   const parsed = parseTracks(fetchedTracks.window, fetchedTracks.element);
-  if (typeof parsed === "string") return parsed;
   const meant = async (entry: TrackEntry): Promise<TrackEntry> => {
     const codecPrivate = await codecPrivateOf(entry.codecPrivate, entry.encodings, inflate);
     return { ...entry, codecPrivate };
   };
   const trackEntries = await Promise.all(parsed.map(meant));
-  for (const uid of sharedUids(parsed)) trackTags.delete(uid);
   return { source, segment, head, offsets, trackEntries, trackTags };
 }
 
@@ -106,12 +104,7 @@ export function readInfo(
 ): Promise<ContainerInfo> {
   const located = { ...opened, signal };
   const noInfo = defaultInfo();
-  return optional(noInfo, async () => {
-    const id = E.ID.segment.INFO;
-    const el = (await fetchElement(located, id)) ?? (await hoppedTo(located, id));
-    if (el === null) return noInfo;
-    return parseInfo(el.window, el.element) ?? noInfo;
-  });
+  return fetchedOptional(located, E.ID.segment.INFO, noInfo, parseInfo);
 }
 
 export function readFirstClusterTicks(
@@ -202,12 +195,12 @@ const fetchedOptional = <T>(
   located: Located,
   id: number,
   fallback: T,
-  parse: (window: Window, element: Element) => T | null,
+  parse: (window: Window, element: Element) => T,
 ): Promise<T> =>
   optional(fallback, async () => {
     const fetched = await fetchElement(located, id);
     if (fetched === null) return fallback;
-    return parse(fetched.window, fetched.element) ?? fallback;
+    return parse(fetched.window, fetched.element);
   });
 
 function probed(located: Located, at: number, limit: number, held: Window): Promise<Window> {
@@ -217,9 +210,8 @@ function probed(located: Located, at: number, limit: number, held: Window): Prom
   return readPastHead(located, at, width, held);
 }
 
-function flagOf(window: Window, field: Element): boolean | null {
-  const value = E.readUint(window, field);
-  return value === null ? null : value === 1;
+function flagOf(window: Window, field: Element): boolean {
+  return E.readUint(window, field) === 1;
 }
 
 function simpleTag(window: Window, { size, body }: Element): TrackTag {
@@ -260,20 +252,9 @@ async function firstClusterTicksIn(located: Located): Promise<number | null> {
 
   const window = await readPastHead(located, at, CLUSTER_PROBE_BYTES, held);
   const cluster = E.readElement(window, at);
-  if (typeof cluster === "string" || cluster.id !== E.ID.segment.CLUSTER) return null;
+  if (typeof cluster === "string") return null;
 
   return readClusterTicks(window, cluster);
-}
-
-async function hoppedTo(
-  located: Located,
-  id: number,
-): Promise<{ window: Window; element: Element } | null> {
-  for await (const hop of hopTopLevel(located)) {
-    if (hop.el.id === E.ID.segment.CLUSTER) return null;
-    if (hop.el.id === id) return fetchAt(located, id, hop.at);
-  }
-  return null;
 }
 
 function locateTopLevel(head: Window, segment: Segment): Placed {
@@ -319,8 +300,8 @@ function placeSeeks(
   const seekHeads: number[] = [];
   for (const seek of E.children(window, seekHead.body, seekHead.size)) {
     if (seek.id !== E.ID.seek.ENTRY) continue;
-    let id: number | null = null;
-    let position: number | null = null;
+    let id = 0;
+    let position = 0;
     for (const field of E.children(window, seek.body, seek.size)) {
       if (field.id === E.ID.seek.ID) {
         id = E.readUint(window, field);
@@ -328,7 +309,6 @@ function placeSeeks(
         position = E.readUint(window, field);
       }
     }
-    if (id === null || position === null) continue;
     const at = segment.body + position;
     if (at >= window.fileSize) continue;
     if (id === E.ID.segment.SEEK_HEAD) {
@@ -355,7 +335,7 @@ async function placeChained(located: Located, at: number): Promise<void> {
   });
 }
 
-function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | null {
+function parseCues(window: Window, cues: Element, segment: Segment): CueIndex {
   const byTrack: CueIndex = new Map();
   const { bytes } = window;
   // The child walk is unrolled by hand.
@@ -377,7 +357,6 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
     const sizeLength = E.vintLength(bytes[sizeStart] as number);
     if (sizeLength > E.MAX_VINT_BYTES) throw new E.GrammarError();
     startOf(sizeAt, sizeLength);
-    if (E.vintAllOnes(bytes, sizeStart, sizeLength)) throw new E.GrammarError();
     cursor.body = sizeAt + sizeLength;
     cursor.next = cursor.body + E.vintValue(bytes, sizeStart, sizeLength, "size");
     if (cursor.next > end) throw new E.GrammarError();
@@ -385,7 +364,7 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
   const cursorUint = () => {
     const size = cursor.next - cursor.body;
     const start = startOf(cursor.body, size);
-    return E.uintFits(size) ? E.uintValue(bytes, start, size) : null;
+    return E.uintValue(bytes, start, size);
   };
   const pointTicks = (body: number, next: number) => {
     let fieldAt = body;
@@ -412,9 +391,9 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
         const fieldBody = cursor.body;
         const fieldNext = cursor.next;
         if (fieldId === E.ID.cue.TRACK_POSITIONS) {
-          let trackNumber: number | null = null;
-          let clusterPos: number | null = null;
-          let relPos: number | null = 0;
+          let trackNumber = 0;
+          let clusterPos = 0;
+          let relPos = 0;
           let itemAt = fieldBody;
           while (itemAt < fieldNext) {
             readElementHeader(itemAt, fieldNext);
@@ -429,7 +408,6 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex | 
             }
             itemAt = cursor.next;
           }
-          if (trackNumber === null || clusterPos === null || relPos === null) return null;
           const position: CuePosition = { clusterPos: segment.body + clusterPos, relPos, ticks };
           const list = byTrack.get(trackNumber);
           if (list === undefined) byTrack.set(trackNumber, [position]);
@@ -462,13 +440,11 @@ async function fetchAt(
   if (!readsAs(header, id)) return null;
   if (header.next - at > MAX_HEADER_ELEMENT_BYTES) return null;
   const window = await readPastHead(located, at, header.next - at, probe);
-  const element = E.readElement(window, at);
-  return E.decoded(element) ? { window, element } : null;
+  return { window, element: header };
 }
 
-function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCode {
+function parseTracks(window: Window, tracks: Element): TrackEntry[] {
   const entries: TrackEntry[] = [];
-  const numbers = new Set<number>();
   let index = 0;
   for (const entryEl of E.children(window, tracks.body, tracks.size)) {
     if (entryEl.id !== E.ID.track.ENTRY) continue;
@@ -498,23 +474,17 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
     for (const field of E.children(window, entryEl.body, entryEl.size)) {
       const { id } = field;
       if (id === E.ID.track.NUMBER) {
-        const number = E.readUint(window, field);
-        if (number === null) return "malformed";
-        entry.number = number;
+        entry.number = E.readUint(window, field);
       } else if (id === E.ID.track.UID) {
         entry.uid = E.readUid(window, field);
       } else if (id === E.ID.track.TYPE) {
-        const typeCode = E.readUint(window, field);
-        if (typeCode === null) return "malformed";
-        entry.typeCode = typeCode;
+        entry.typeCode = E.readUint(window, field);
       } else if (id === E.ID.track.CODEC_ID) {
         entry.codecId = E.readAscii(window, field);
       } else if (id === E.ID.track.CODEC_PRIVATE) {
         entry.codecPrivate = E.readBytes(window, field.body, field.size).slice();
       } else if (id === E.ID.track.CODEC_DELAY) {
-        const delay = E.readUint(window, field);
-        if (delay === null) return "malformed";
-        entry.codecDelayNs = delay;
+        entry.codecDelayNs = E.readUint(window, field);
       } else if (id === E.ID.track.LANGUAGE) {
         entry.language = E.readAscii(window, field);
       } else if (id === E.ID.track.LANGUAGE_IETF) {
@@ -522,28 +492,25 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] | RefusalCod
       } else if (id === E.ID.track.NAME) {
         entry.name = E.readUtf8(window, field);
       } else if (id === E.ID.track.FLAG_FORCED) {
-        entry.flags.forced = flagOf(window, field) ?? entry.flags.forced;
+        entry.flags.forced = flagOf(window, field);
       } else if (id === E.ID.track.FLAG_DEFAULT) {
-        entry.flags.default = flagOf(window, field) ?? entry.flags.default;
+        entry.flags.default = flagOf(window, field);
       } else if (id === E.ID.track.FLAG_ENABLED) {
-        entry.flags.enabled = flagOf(window, field) ?? entry.flags.enabled;
+        entry.flags.enabled = flagOf(window, field);
       } else if (id === E.ID.track.FLAG_HEARING_IMPAIRED) {
-        entry.flags.hearingImpaired = flagOf(window, field) ?? entry.flags.hearingImpaired;
+        entry.flags.hearingImpaired = flagOf(window, field);
       } else if (id === E.ID.track.FLAG_VISUAL_IMPAIRED) {
-        entry.flags.visualImpaired = flagOf(window, field) ?? entry.flags.visualImpaired;
+        entry.flags.visualImpaired = flagOf(window, field);
       } else if (id === E.ID.track.FLAG_TEXT_DESCRIPTIONS) {
-        entry.flags.textDescriptions = flagOf(window, field) ?? entry.flags.textDescriptions;
+        entry.flags.textDescriptions = flagOf(window, field);
       } else if (id === E.ID.track.FLAG_ORIGINAL) {
-        entry.flags.original = flagOf(window, field) ?? entry.flags.original;
+        entry.flags.original = flagOf(window, field);
       } else if (id === E.ID.track.FLAG_COMMENTARY) {
-        entry.flags.commentary = flagOf(window, field) ?? entry.flags.commentary;
+        entry.flags.commentary = flagOf(window, field);
       } else if (id === E.ID.track.CONTENT_ENCODINGS) {
         entry.encodings = encodingsIn(window, field);
       }
     }
-    if (entry.number < 0) return "malformed";
-    if (numbers.has(entry.number)) return "malformed";
-    numbers.add(entry.number);
     entries.push(entry);
   }
   return entries;
@@ -553,7 +520,7 @@ function parseTimestampScale(window: Window, info: Element): number {
   for (const field of E.children(window, info.body, info.size)) {
     if (field.id !== E.ID.info.TIMESTAMP_SCALE) continue;
     const scale = E.readUint(window, field);
-    if (scale !== null && scale > 0) return scale;
+    if (scale > 0) return scale;
   }
   return E.DEFAULT_TIMESTAMP_SCALE;
 }
@@ -637,18 +604,15 @@ function parseInfo(window: Window, info: Element): ContainerInfo {
     } else if (id === E.ID.info.DURATION) {
       const ticks = E.readFloat(window, field);
       if (ticks !== null) {
-        const ms = (ticks * scale) / 1_000_000;
-        if (Number.isFinite(ms) && ms >= 0) {
-          out.durationMs = ms;
-        }
+        out.durationMs = (ticks * scale) / 1_000_000;
       }
     }
   }
   return out;
 }
 
-function parseTrackTags(window: Window, tags: Element): Map<string | null, TrackTag[]> {
-  const byUid = new Map<string | null, TrackTag[]>();
+function parseTrackTags(window: Window, tags: Element): Map<string, TrackTag[]> {
+  const byUid = new Map<string, TrackTag[]>();
   for (const tag of E.children(window, tags.body, tags.size)) {
     if (tag.id !== E.ID.tag.ENTRY) continue;
     let uid: string | null = null;
@@ -673,14 +637,4 @@ function parseTrackTags(window: Window, tags: Element): Map<string | null, Track
     }
   }
   return byUid;
-}
-
-function sharedUids(entries: readonly TrackEntry[]): Set<string | null> {
-  const seen = new Set<string | null>();
-  const shared = new Set<string | null>();
-  for (const { uid } of entries) {
-    if (seen.has(uid)) shared.add(uid);
-    seen.add(uid);
-  }
-  return shared;
 }

@@ -19,9 +19,9 @@ export interface ContainerInfo {
   title: string | null;
   muxingApp: string | null;
   writingApp: string | null;
-  /** null where the container states none, or one that is not a finite, non-negative number. */
+  /** null where the container states none. */
   durationMs: number | null;
-  /** Nanoseconds per tick, 1,000,000 where the container states none or zero. */
+  /** Nanoseconds per tick, 1,000,000 where the container states none. */
   timestampScale: number;
 }
 

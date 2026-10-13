@@ -48,7 +48,6 @@ export function rangeSource(
     const signal = givenSignal(given);
     const { total, head } = await headFor(signal);
     const bounded = available(at, length, total);
-    if (bounded === 0) return new Uint8Array(0);
     const lent = lend(into, bounded);
     if (at + bounded <= head.length) {
       if (lent === null) return new Uint8Array(head.subarray(at, at + bounded));
@@ -121,13 +120,11 @@ async function requestRange(
     );
   }
   const contentRange = /^bytes\s+(\d+)-\d+\/(\d+)\s*$/.exec(reply.header("content-range") ?? "");
-  const total = Number(contentRange?.[2]);
-  if (contentRange === null || !Number.isSafeInteger(total)) {
-    throw await dropped(
-      `${invariants.url} did not state a countable total length in Content-Range`,
-    );
+  if (contentRange === null) {
+    throw await dropped(`${invariants.url} did not state a total length in Content-Range`);
   }
   const start = Number(contentRange[1]);
+  const total = Number(contentRange[2]);
   if (start !== from) {
     throw await dropped(
       `${invariants.url} answered a range from ${String(start)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
@@ -199,7 +196,7 @@ async function readBodyInto(reply: RangeReply, into: Uint8Array, at: number): Pr
       written += kept;
     }
   } finally {
-    await reply.cancel().catch(() => {});
+    await reply.cancel();
   }
   return written;
 }
@@ -219,16 +216,10 @@ async function* watched(
         yield chunk;
         continue;
       }
-      await new Promise((resolve) => setTimeout(resolve, 0));
       idle += 1;
       if (idle > IDLE_CHUNK_LIMIT) {
         raisedHere = true;
         throw new Error(`${url} sent ${String(idle)} empty chunks in a row and no bytes`);
-      }
-      const reason = abortReason(dog.signal);
-      if (reason !== null) {
-        raisedHere = true;
-        throw reason;
       }
     }
   } catch (error) {

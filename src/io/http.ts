@@ -19,11 +19,7 @@ export interface UrlOptions {
   stallMs?: number | null;
 }
 
-export const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set([
-  "host",
-  "accept-encoding",
-  "range",
-]);
+export const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set(["host", "accept-encoding"]);
 
 export const whyCredentialed = (parsed: URL): string | null =>
   parsed.username !== "" || parsed.password !== ""

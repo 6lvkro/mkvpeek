@@ -150,7 +150,6 @@ export function linkedSignal(...signals: ReadonlyArray<AbortSignal | undefined>)
     if (signal === undefined) continue;
     const fired = () => abort(signal.reason);
     unhooks.push(onAbort(signal, fired));
-    if (linked.signal.aborted) break;
   }
   return { signal: linked.signal, abort, unlink };
 }

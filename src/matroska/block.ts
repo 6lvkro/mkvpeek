@@ -35,12 +35,10 @@ export const BLOCK_REFUSAL = {
   noClusterTime: "no-cluster-time",
   runsPastCluster: "runs-past-cluster",
   notAnElement: "not-an-element",
-  pastTheCluster: "past-the-cluster",
   notABlock: "not-a-block",
   notFetched: "not-fetched",
   groupChildren: "group-children",
   groupEmpty: "group-empty",
-  strayBlock: "stray-block",
   stranger: "stranger",
   blockHead: "block-head",
   laced: "laced",
@@ -51,6 +49,11 @@ export const BLOCK_REFUSAL = {
 export type BlockClause = (typeof BLOCK_REFUSAL)[keyof typeof BLOCK_REFUSAL];
 
 export const BLOCK_PROBE_BYTES = 32;
+
+export const FRAME_IDS: ReadonlySet<number> = new Set([
+  E.ID.cluster.SIMPLE_BLOCK,
+  E.ID.cluster.BLOCK_GROUP,
+]);
 
 /**
  * One block element as a frame, or null for a track `claims` does not hold.
@@ -85,9 +88,11 @@ export async function frameIn(
       if (field.id === E.ID.blockGroup.BLOCK) {
         inner = field;
       } else if (field.id === E.ID.blockGroup.BLOCK_DURATION) {
-        const buys = E.uintFits(field.size) && !E.covers(window, field.body, field.size);
-        const covering = buys ? await supply(field.body, field.size) : window;
-        durationTicks = E.readUint(covering, field);
+        if (E.uintFits(field.size)) {
+          const held = E.covers(window, field.body, field.size);
+          const covering = held ? window : await supply(field.body, field.size);
+          durationTicks = E.readUint(covering, field);
+        }
       }
       pos = field.next;
     }

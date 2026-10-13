@@ -109,11 +109,11 @@ function encodingOf(window: Window, encodingEl: Element): ContentEncoding {
   for (const field of E.children(window, encodingEl.body, encodingEl.size)) {
     const { id } = field;
     if (id === E.ID.contentEncoding.ORDER) {
-      order = uintOf(window, field);
+      order = E.readUint(window, field);
     } else if (id === E.ID.contentEncoding.SCOPE) {
-      scope = uintOf(window, field);
+      scope = E.readUint(window, field);
     } else if (id === E.ID.contentEncoding.TYPE) {
-      type = uintOf(window, field);
+      type = E.readUint(window, field);
     } else if (id === E.ID.contentEncoding.COMPRESSION) {
       compression = compressionOf(window, field);
     }
@@ -126,16 +126,10 @@ function compressionOf(window: Window, compressionEl: Element): ContentCompressi
   let settings: Uint8Array | null = null;
   for (const field of E.children(window, compressionEl.body, compressionEl.size)) {
     if (field.id === E.ID.contentEncoding.COMP_ALGO) {
-      algo = uintOf(window, field);
+      algo = E.readUint(window, field);
     } else if (field.id === E.ID.contentEncoding.COMP_SETTINGS) {
       settings = E.readBytes(window, field.body, field.size).slice();
     }
   }
   return { algo, settings };
-}
-
-function uintOf(window: Window, field: Element): number {
-  const value = E.readUint(window, field);
-  if (value === null) throw new E.GrammarError();
-  return value;
 }

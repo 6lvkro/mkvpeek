@@ -229,9 +229,7 @@ function statesTheSame(given: unknown, own: unknown): boolean {
   if (typeof own !== "object" || own === null) return Object.is(given, own);
   if (own instanceof Uint8Array) return sameBytes(given, own);
   if (typeof given !== "object" || given === null) return false;
-  if (Array.isArray(given) !== Array.isArray(own)) return false;
   const theirs = given as Record<string, unknown>;
-  if (Array.isArray(own) && theirs.length !== own.length) return false;
   const ours = own as Record<string, unknown>;
   const keys = Object.keys(ours);
   const theirKeys = new Set(Object.keys(theirs));

@@ -25,17 +25,11 @@ export function timelineOf(
   if (firstTicks === null) throw new RefusalError("malformed");
   const nsPerTick = info.timestampScale;
   const delayNs = trackEntries.reduce((most, t) => Math.max(most, t.codecDelayNs), 0);
-  const startTicks = firstTicks - halfAway(delayNs / nsPerTick);
-  const startUs = halfAway((startTicks * nsPerTick) / NS_PER_US);
-  return { nsPerTick, zeroTicks: halfAway((startUs * NS_PER_US) / nsPerTick) };
+  return { nsPerTick, zeroTicks: firstTicks - Math.round(delayNs / nsPerTick) };
 }
 
 const NS_PER_MS = 1_000_000;
 
-const NS_PER_US = 1000;
-
 const TIMELINE_TYPES: ReadonlySet<TrackType> = new Set(["video", "audio", "complex"]);
 
 const msOf = (ticks: number, { nsPerTick }: Timeline): number => (ticks * nsPerTick) / NS_PER_MS;
-
-const halfAway = (x: number): number => Math.sign(x) * Math.round(Math.abs(x));

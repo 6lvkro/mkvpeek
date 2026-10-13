@@ -8,25 +8,21 @@ interface Script {
   format: "ass" | "ssa";
 }
 
-/** A SubStation track is written in the format its script's head states, and not without a head. */
 export function substationScript(track: Track): Script | null {
   if (track.codecPrivate === null) return null;
   const text = UTF8.decode(track.codecPrivate);
-  const format = text === "" || cString(text).includes("\n[V4+ Styles]") ? "ass" : "ssa";
+  const format = text.includes("\n[V4+ Styles]") ? "ass" : "ssa";
   return { text, format };
 }
 
 export function startSubstation({ text: script, format }: Script, out: Spool): Assembler {
-  const searched = cString(script);
-  const eventsAt = searched.indexOf("\n[Events]");
-  const formatAt = eventsAt < 0 ? -1 : searched.indexOf("Format:", eventsAt);
-  const formatEnd = formatAt < 0 ? -1 : searched.indexOf("\n", formatAt);
+  const eventsAt = script.indexOf("\n[Events]");
+  const formatAt = eventsAt < 0 ? -1 : script.indexOf("Format:", eventsAt);
+  const formatEnd = formatAt < 0 ? -1 : script.indexOf("\n", formatAt);
   const headEnd = formatEnd < 0 ? script.length : formatEnd + 1;
   const firstColumn = format === "ass" ? "Layer" : "Marked";
   const added =
-    script !== "" && eventsAt < 0
-      ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n`
-      : "";
+    eventsAt < 0 ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n` : "";
   const headText = `${lines(script.slice(0, headEnd))}${added}`;
   const trailerText = lines(script.slice(headEnd));
   const opening = format === "ass" ? "Dialogue: " : `Dialogue: ${MARKED_PREFIX}`;
@@ -46,7 +42,7 @@ export function startSubstation({ text: script, format }: Script, out: Spool): A
 }
 
 interface Dialogue {
-  order: CLong;
+  order: number;
   layer: string;
   start: number;
   end: number;
@@ -57,14 +53,10 @@ interface QueuedDialogue extends Dialogue {
   arrival: number;
 }
 
-/** A number C's strtol read, and where its reading stopped. */
 interface LeadingNumber {
-  value: CLong;
+  value: number;
   end: number;
 }
-
-/** A C long, held as a number wherever a double holds it exactly. */
-type CLong = number | bigint;
 
 /** Lines in ReadOrder, each queued until every ReadOrder before it is out. */
 class ReadOrder {
@@ -106,18 +98,8 @@ const SUBSTATION_EVENT_COLUMNS = "Start, End, Style, Name, MarginL, MarginR, Mar
 
 const MARKED_PREFIX = "Marked=";
 
-const LONG_MAX = 2n ** 63n - 1n;
-const LONG_MIN = -(2n ** 63n);
-
-const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
-
-/** The most digits a double always holds exactly. */
-const EXACT_DIGITS = 15;
-
 /** H:MM:SS.CC, whose hours the ten-hour cap keeps to one digit. */
 const TIME_BYTES = 10;
-
-const NAN_TIME = "NaN:NaN:NaN.NaN";
 
 /** The commas after the Layer and the two times, and the LF after the text. */
 const LINE_PUNCTUATION_BYTES = 4;
@@ -125,22 +107,13 @@ const LINE_PUNCTUATION_BYTES = 4;
 const COMMA = 0x2c;
 const COLON = 0x3a;
 const DOT = 0x2e;
-const SPACE = 0x20;
-const TAB = 0x09;
 const CR = 0x0d;
 const LF = 0x0a;
-const PLUS = 0x2b;
 const MINUS = 0x2d;
 const ZERO = 0x30;
 const NINE = 0x39;
 const CONTINUATION_LOW = 0x80;
 const CONTINUATION_HIGH = 0xbf;
-
-const cString = (text: string): string => text.split("\0", 1)[0] as string;
-
-const timeBytes = (cs: number): number => (Number.isNaN(cs) ? NAN_TIME.length : TIME_BYTES);
-
-const isCSpace = (byte: number): boolean => byte === SPACE || (byte >= TAB && byte <= CR);
 
 const isDigit = (byte: number): boolean => byte >= ZERO && byte <= NINE;
 
@@ -158,10 +131,10 @@ function lines(text: string): string {
 function dialogueOf(frame: Frame, format: "ass" | "ssa"): Dialogue {
   const { data } = frame;
   const nul = data.indexOf(0);
-  const order = cStrtol(data, 0);
+  const order = leadingNumber(data, 0);
   const fieldAt = past(data, order.end, ",");
   const layerAt = format === "ass" ? fieldAt : past(data, fieldAt, MARKED_PREFIX);
-  const layer = cStrtol(data, layerAt);
+  const layer = leadingNumber(data, layerAt);
   const restAt = past(data, layer.end, ",");
   let restEnd = nul < 0 ? data.length : nul;
   while (data[restEnd - 1] === CR || data[restEnd - 1] === LF) {
@@ -180,32 +153,15 @@ function past(bytes: Uint8Array, at: number, prefix: string): number {
   return at + prefix.length;
 }
 
-function cStrtol(bytes: Uint8Array, at: number): LeadingNumber {
-  let signAt = at;
-  while (isCSpace(bytes[signAt] as number)) {
-    signAt += 1;
-  }
-  const sign = bytes[signAt];
-  const digitsAt = sign === PLUS || sign === MINUS ? signAt + 1 : signAt;
-  let end = digitsAt;
-  let small = 0;
+function leadingNumber(bytes: Uint8Array, at: number): LeadingNumber {
+  const negative = bytes[at] === MINUS;
+  let end = negative ? at + 1 : at;
+  let value = 0;
   while (isDigit(bytes[end] as number)) {
-    small = small * 10 + ((bytes[end] as number) - ZERO);
+    value = value * 10 + ((bytes[end] as number) - ZERO);
     end += 1;
   }
-  if (end === digitsAt) return { value: 0, end: at };
-  if (end - digitsAt > EXACT_DIGITS) return { value: wideLong(bytes, signAt, end), end };
-  return { value: sign === MINUS ? -small : small, end };
-}
-
-/** A long of more digits than a double holds exactly, saturated as strtol does. */
-function wideLong(bytes: Uint8Array, from: number, to: number): CLong {
-  const digits = UTF8.decode(bytes.subarray(from, to));
-  const stated = BigInt(digits);
-  const capped = stated > LONG_MAX ? LONG_MAX : stated;
-  const long = capped < LONG_MIN ? LONG_MIN : capped;
-  const exact = long >= -MAX_SAFE && long <= MAX_SAFE;
-  return exact ? Number(long) : long;
+  return { value: negative ? -value : value, end };
 }
 
 /**
@@ -293,8 +249,8 @@ function dequeue(heap: QueuedDialogue[]): QueuedDialogue {
 
 function writeDialogues(out: Spool, opening: string, dialogues: readonly Dialogue[]): void {
   let size = 0;
-  for (const { layer, start, end, text } of dialogues) {
-    size += opening.length + layer.length + timeBytes(start) + timeBytes(end) + text.length;
+  for (const { layer, text } of dialogues) {
+    size += opening.length + layer.length + 2 * TIME_BYTES + text.length;
     size += LINE_PUNCTUATION_BYTES;
   }
   let at = out.reserve(size);
@@ -326,7 +282,6 @@ function writeAscii(bytes: Uint8Array, at: number, ascii: string): number {
 }
 
 function writeTime(bytes: Uint8Array, at: number, cs: number): number {
-  if (Number.isNaN(cs)) return writeAscii(bytes, at, NAN_TIME);
   const capped = Math.min(cs, LAST_SUBSTATION_CS);
   const { hours, minutes, seconds, fraction } = clockFields(capped, CS_PER_SECOND);
   bytes[at] = ZERO + hours;

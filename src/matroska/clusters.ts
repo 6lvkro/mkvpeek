@@ -15,16 +15,11 @@ import {
   BLOCK_REFUSAL,
   type BlockClause,
   type BlockFrame,
+  FRAME_IDS,
   type FrameClaim,
   frameIn,
 } from "./block.js";
-import {
-  CLUSTER_PROBE_BYTES,
-  FRAME_IDS,
-  hopTopLevel,
-  readClusterTicks,
-  type SegmentPass,
-} from "./chain.js";
+import { CLUSTER_PROBE_BYTES, hopTopLevel, readClusterTicks, type SegmentPass } from "./chain.js";
 
 /**
  * Hands over the claimed tracks' frames cluster by cluster, in file order.
@@ -235,9 +230,6 @@ const TOP_LEVEL_IDS = new Set<number>([...SEGMENT_CHILD_IDS, ...Object.values(E.
 /** How many clusters per lane the walk may find ahead of the one it hands over next. */
 const CLUSTERS_AHEAD_PER_LANE = 4;
 
-/** A BlockGroup child sitting directly under the cluster is a stray block. */
-const STRAY_IDS = new Set<number>(Object.values(E.ID.blockGroup));
-
 async function walkCluster(
   walk: WalkInvariants,
   span: ClusterSpan,
@@ -323,16 +315,11 @@ async function walkSpan(
     const window = await supply(pos, need);
     const el = E.readElement(window, pos);
     if (typeof el === "string") return BLOCK_REFUSAL.notAnElement;
-    if ("open" in el) {
-      if ("open" in span.el) return { frames, end: pos, carried };
-      return BLOCK_REFUSAL.runsPastCluster;
-    }
-    if (STRAY_IDS.has(el.id)) return BLOCK_REFUSAL.strayBlock;
     if (!CLUSTER_CHILD_IDS.has(el.id)) {
       if ("open" in span.el && SEGMENT_CHILD_IDS.has(el.id)) return { frames, end: pos, carried };
       return BLOCK_REFUSAL.stranger;
     }
-    if (el.next > span.end) return BLOCK_REFUSAL.runsPastCluster;
+    if (!E.fits(el, span.end)) return BLOCK_REFUSAL.runsPastCluster;
     if (FRAME_IDS.has(el.id)) {
       const frame = await frameIn(el, clusterTicks, window, claims, supply);
       if (typeof frame === "string") return frame;

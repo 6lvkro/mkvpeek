@@ -22,7 +22,6 @@ const SUP_TICKS_PER_MS = 90;
 /** A PGS segment's type and its 16-bit size. */
 const SEGMENT_HEAD_BYTES = 3;
 
-/** The ticks are written in 32 bits, so a start past them wraps as ffmpeg's does. */
 function supHead(ticks: number): Uint8Array {
   const head = new Uint8Array(SUP_HEAD_BYTES);
   const view = new DataView(head.buffer);
