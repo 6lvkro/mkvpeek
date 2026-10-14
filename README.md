@@ -91,6 +91,7 @@ const { tracks } = await peekTracks(source);
 - On a high-latency link the cluster-by-cluster `walk` loses its speed to round trips; downloading the file once and passing the bytes can be faster.
 
 This reads fewer containers than the external tools, so where one is available, read by `index` and hand refused files to it.
+A refusal can follow frames already handed over, so drop what was made of them before handing the file on.
 
 ```ts
 import { openContainer, worthFallback } from "mkvpeek";
@@ -101,6 +102,7 @@ try {
   for await (const frame of container.frames(subtitles, { via: "index" })) use(frame);
 } catch (error) {
   if (!worthFallback(error)) throw error;
+  drop();
   await demux(path);
 }
 ```

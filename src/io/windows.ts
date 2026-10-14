@@ -25,11 +25,14 @@ export class WindowIndex {
   readonly #sorted: Window[];
   readonly #widestSorted: number;
   readonly #head: Window | undefined;
+  readonly #under: WindowIndex | undefined;
 
-  constructor(windows: readonly Window[], head?: Window) {
+  /** An index over the windows, which also answers from the index it stacks on. */
+  constructor(windows: readonly Window[], head?: Window, under?: WindowIndex) {
     this.#sorted = [...windows].sort((a, b) => a.at - b.at);
     this.#widestSorted = this.#sorted.reduce((max, w) => Math.max(max, w.bytes.length), 0);
     this.#head = head;
+    this.#under = under;
   }
 
   find(at: number, length: number): Window | null {
@@ -52,6 +55,8 @@ export class WindowIndex {
         best = window;
       }
     }
+    const below = this.#under?.find(at, length) ?? null;
+    if (below !== null && (best === null || E.reachOf(below) > E.reachOf(best))) return below;
     return best;
   }
 }

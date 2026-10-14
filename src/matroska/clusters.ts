@@ -23,6 +23,12 @@ import {
 } from "./block.js";
 import { CLUSTER_PROBE_BYTES, hopTopLevel, readClusterTicks, type SegmentPass } from "./chain.js";
 
+/** The cluster a walk takes over at from another read, and the body offset its blocks must lie past. */
+export interface WalkFrom {
+  clusterPos: number;
+  relPos: number;
+}
+
 /**
  * Hands over the claimed tracks' frames cluster by cluster, in file order.
  *
@@ -33,21 +39,24 @@ export async function* walkFrames(
   claims: ReadonlyMap<number, FrameClaim>,
   knobs: WalkFetch,
   watch: Watch,
+  from?: WalkFrom,
 ): AsyncGenerator<BlockFrame[]> {
   const fileSize = opened.head.fileSize;
-  watch.onProgress(0, fileSize);
+  // The bytes before the cluster a walk takes over at are done, as the read before it handed their frames over.
+  const startBytes = from?.clusterPos ?? 0;
+  watch.onProgress(startBytes, fileSize);
   const ended = linkedSignal(watch.signal);
   const { signal } = ended;
   const reading = { ...opened, signal };
   const slotBytes = Math.min(knobs.blockAheadBytes, fileSize);
   const pool = windowPool(slotBytes, knobs.concurrency + 4);
   const sized = { source: opened.source, fileSize };
-  const walk: WalkInvariants = { sized, claims, knobs, head: opened.head, signal };
+  const walk: WalkInvariants = { sized, claims, knobs, head: opened.head, signal, from };
   // The hop takes one of the reads; with none to spare for a lane, it walks what it finds.
   const laneCount = knobs.concurrency - 1;
   const ahead = Math.max(1, laneCount) * CLUSTERS_AHEAD_PER_LANE;
   const walked = new Map<number, BlockFrame[]>();
-  let doneBytes = 0;
+  let doneBytes = startBytes;
   let foundCount = 0;
   let handedCount = 0;
   let refused = false;
@@ -95,7 +104,7 @@ export async function* walkFrames(
     // the window the previous open walk was carrying
     let seed: Loaned | undefined;
     try {
-      let pos = opened.segment.body;
+      let pos = from?.clusterPos ?? opened.segment.body;
       while (await admitted(foundCount)) {
         let openCluster: HoppedCluster | null = null;
         for await (const { at, el, window } of hopTopLevel(reading, pos)) {
@@ -184,6 +193,7 @@ interface WalkInvariants {
   knobs: WalkFetch;
   head: Window;
   signal: AbortSignal;
+  from: WalkFrom | undefined;
 }
 
 /** For a cluster without a size, `end` is the end of the Segment. */
@@ -256,7 +266,7 @@ function releaseAll(ledger: Set<Loaned>, swallow: boolean): void {
 }
 
 async function walkSpan(
-  { sized, claims, knobs, head, signal }: WalkInvariants,
+  { sized, claims, knobs, head, signal, from }: WalkInvariants,
   span: ClusterSpan,
   { pool, ledger }: Loans,
   seed?: Loaned,
@@ -294,6 +304,7 @@ async function walkSpan(
   if (clusterTicks === null) return BLOCK_REFUSAL.noClusterTime;
 
   const frames: BlockFrame[] = [];
+  const handedThrough = from !== undefined && span.at === from.clusterPos ? from.relPos : -1;
   let pos = span.el.body;
   const supply = async (at: number, need: number) => {
     const width = widthFor(at, need);
@@ -313,7 +324,7 @@ async function walkSpan(
       return BLOCK_REFUSAL.stranger;
     }
     if (!E.fits(el, span.end)) return BLOCK_REFUSAL.runsPastCluster;
-    if (FRAME_IDS.has(el.id)) {
+    if (FRAME_IDS.has(el.id) && pos - span.el.body > handedThrough) {
       const steps = blockSteps(el, clusterTicks, window, claims);
       let step = steps.next();
       while (step.done !== true) {

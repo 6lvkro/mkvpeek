@@ -41,6 +41,7 @@ export type FrameFinder = "index" | "walk";
  *
  * - `index`: follows the container's Cues and picks up only the frames.
  * Fast, but a muxer may have written no index, so it accepts fewer containers than `walk`.
+ * It can refuse after frames it has handed over.
  *
  * - `walk`: visits every cluster. Slow, reading block by block, but it answers without an index.
  *

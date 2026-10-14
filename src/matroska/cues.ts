@@ -86,26 +86,21 @@ export function planProbes(clusters: Iterable<number>): Range[] {
   return ranges;
 }
 
-export function planShortfall(windows: WindowIndex, points: readonly CuePosition[]): Range[] {
-  const ranges: Range[] = [];
+/** Each point's block bytes the windows do not hold, null where they hold them all or the block does not locate. */
+export function pointShortfalls(
+  windows: WindowIndex,
+  points: readonly CuePosition[],
+): (Range | null)[] {
   const memo: ClusterMemo = { last: null };
-  for (const point of points) {
+  return points.map((point) => {
     const pointed = locateBlock(windows, point, memo);
-    if (typeof pointed === "string") continue;
-    const { blockAt, outer } = pointed;
-    const rest = unheldBlock(windows, blockAt, outer);
-    if (rest !== null) ranges.push(rest);
-  }
-  return ranges;
+    if (typeof pointed === "string") return null;
+    return unheldBlock(windows, pointed.blockAt, pointed.outer);
+  });
 }
 
-export function planCuedShortfall(windows: WindowIndex, blocks: Iterable<CuedBlock>): Range[] {
-  const ranges: Range[] = [];
-  for (const { blockAt, outer } of blocks) {
-    const rest = unheldBlock(windows, blockAt, outer);
-    if (rest !== null) ranges.push(rest);
-  }
-  return ranges;
+export function cuedShortfall(windows: WindowIndex, { blockAt, outer }: CuedBlock): Range | null {
+  return unheldBlock(windows, blockAt, outer);
 }
 
 /** The one block of the track that parses past the cue's position at some cluster-header width. */
