@@ -36,6 +36,7 @@ export interface Track<T extends TrackType = TrackType> {
   flags: TrackFlags;
   /** Frame times already account for the largest CodecDelay any track states. */
   codecDelayNs: number;
+  /** The SimpleTags of every Tag that targets this track's TrackUID. */
   tags: TrackTag[];
 }
 

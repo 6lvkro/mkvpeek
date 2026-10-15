@@ -14,7 +14,7 @@ export interface UrlOptions {
   /**
    * How long the source may deliver nothing before the read is refused.
    *
-   * Unset, a socket that has gone quiet waits until the peek's `signal` cuts it.
+   * Unset, a socket that has gone quiet waits until the call's `signal` cuts it.
    */
   stallMs?: number | null;
 }

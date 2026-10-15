@@ -30,8 +30,7 @@ export function peekTracks(target: Target, options?: Abortable): Promise<Listing
 /**
  * Opens a container for its tracks' frames, and keeps the target open until `close`.
  *
- * It reads what `peekTracks` reads with `info`,
- * and throws a refusal at the open or at a read as a `RefusalError`.
+ * It reads what `peekTracks` reads, and throws a refusal at the open or at a read as a `RefusalError`.
  *
  * @example
  * await using container = await openContainer(path);

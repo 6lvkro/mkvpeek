@@ -1,11 +1,4 @@
-/**
- * Anything addressable by offset and length can be a source.
- *
- * - a file
- * - an HTTP server that honours Range requests
- * - an object store
- * - a buffer already in memory
- */
+/** Anything addressable by offset and length can be a source. */
 export interface Source {
   /**
    * The length in bytes.
@@ -30,7 +23,15 @@ export interface Source {
   trip?: Trip;
 }
 
-/** What kind of round trip a read to this source is. */
+/**
+ * What kind of round trip a read to this source is.
+ *
+ * - `local`: a disk on this machine.
+ *
+ * - `mount`: a network share read as files, such as SMB, NFS or SSHFS.
+ *
+ * - `remote`: a server across a network, such as one answering HTTP Range requests.
+ */
 export type Trip = "local" | "mount" | "remote";
 
 export interface SizedSource {

@@ -50,9 +50,8 @@ export type FrameFinder = "index" | "walk";
 export type FrameVia = "both" | FrameFinder;
 
 /**
- * The options are read once, when `frames` is called.
- *
- * An unknown `via` or `preset`, or a `strict` that is not a boolean, throws a TypeError there.
+ * An unknown `via` or `preset`, or a `strict` that is not a boolean,
+ * throws a TypeError when `frames` is called.
  */
 export interface FrameOptions extends FrameTuning, Abortable {
   via?: FrameVia;
@@ -94,7 +93,6 @@ export interface FrameProgress {
    * Under {@linkcode FrameVia} `both`, a `walk` here means `index` backed off.
    */
   finder: FrameFinder;
-  /** Grows toward `totalBytes`, and never goes back. */
   doneBytes: number;
   /**
    * - `index`: the bytes the plan means to fetch, raised by what the read fetches past it

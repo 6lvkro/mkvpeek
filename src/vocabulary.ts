@@ -1,7 +1,5 @@
 /**
- * The flags whose structure the spec dictates.
- *
- * enabled, default and forced are effective values with the spec defaults (1, 1, 0) applied;
+ * `enabled`, `default` and `forced` are effective values with the spec defaults (1, 1, 0) applied;
  * the other five have no default.
  */
 export interface TrackFlags {
@@ -73,8 +71,6 @@ export type RefusalCode =
 export interface Abortable {
   /**
    * Stops this call alone before its next read, frame or progress report, and it then ends `cancelled`.
-   *
-   * A call with none of those left answers as it would have.
    *
    * @example
    * const stop = new AbortController();
