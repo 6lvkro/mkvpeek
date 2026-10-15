@@ -10,3 +10,10 @@ export interface SubtitleFile<T = Bytes> {
   /** UTF-8 for the text formats. */
   bytes: T;
 }
+
+/** The next bytes of a track's file. */
+export interface SubtitlePiece {
+  track: Track;
+  format: SubtitleFormat;
+  bytes: Bytes;
+}

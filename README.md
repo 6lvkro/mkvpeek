@@ -72,7 +72,7 @@ try {
 }
 ```
 
-To write a track out as its frames come, rather than hold its file, use `subtitleStream`.
+To write a track out as its frames come, rather than hold its file, use `subtitleStream`, or `subtitleStreams` for several tracks from one read.
 
 Request options such as headers go through `urlSource`.
 

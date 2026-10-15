@@ -25,6 +25,7 @@ export type {
   SubtitleFile,
   SubtitleFormat,
   SubtitleOptions,
+  SubtitlePiece,
   Target,
   Track,
   TrackFlags,
@@ -40,6 +41,7 @@ export {
   subtitleFiles,
   subtitleFormat,
   subtitleStream,
+  subtitleStreams,
   worthFallback,
 } from "../index.js";
 export { openContainer, peekTracks } from "./entry.js";

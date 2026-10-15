@@ -2,7 +2,7 @@ import type { Container } from "../container/contract.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
 import type { Track } from "../tracks.js";
 import type { Bytes } from "../vocabulary.js";
-import type { SubtitleFile, SubtitleFormat } from "./contract.js";
+import type { SubtitleFile, SubtitleFormat, SubtitlePiece } from "./contract.js";
 import { type Assembler, Spool } from "./spool.js";
 import { startSrt } from "./srt.js";
 import { startSubstation, substationScript } from "./substation.js";
@@ -11,11 +11,17 @@ import { startVtt } from "./vtt.js";
 
 export interface SubtitleOptions extends FrameOptions {
   /**
-   * The formats written out, the text ones unless named.
+   * The formats written out, unless named: the text ones, or every one when `tracks` is named.
    *
    * An unknown one is a TypeError.
    */
   formats?: readonly SubtitleFormat[];
+  /**
+   * The tracks written out, every one `container.tracks` lists unless named.
+   *
+   * A track the container does not list is a TypeError.
+   */
+  tracks?: readonly Track[];
 }
 
 /**
@@ -29,12 +35,13 @@ export function subtitleFormat(track: Track): SubtitleFormat | null {
 }
 
 /**
- * Writes a track out as a file, from frames that may hold other tracks' too.
+ * Writes a track out as a file, from frames read for it that may hold other tracks' too.
  *
  * It answers null where `subtitleFormat` does.
  *
  * @example
  * const frames = await Array.fromAsync(container.frames([track]));
+ * use(frames);
  * const sub = subtitleFile(track, frames);
  * if (sub !== null) use(track, sub.format, sub.bytes);
  */
@@ -46,7 +53,7 @@ export function subtitleFile(track: Track, frames: readonly Frame[]): SubtitleFi
 }
 
 /**
- * Writes out every track of `container.tracks` whose format `formats` names and that `readable` answers true for.
+ * Writes out every track of `tracks` whose format `formats` names and that `readable` answers true for, from one read.
  *
  * It writes nothing where that read is refused.
  *
@@ -57,10 +64,7 @@ export async function subtitleFiles(
   container: Container,
   options: SubtitleOptions = {},
 ): Promise<SubtitleFile[]> {
-  const formats: ReadonlySet<SubtitleFormat | null> = formatsNamed({ ...options }.formats);
-  const written = container.tracks.filter(
-    (track) => formats.has(subtitleFormat(track)) && container.readable(track),
-  );
+  const written = writtenTracks(container, options);
   const drafts = new Map<number, Draft>();
   for (const track of written) {
     const draft = draftOf(track) as Draft;
@@ -98,6 +102,24 @@ export function subtitleStream(
   return { track, format: draft.format, bytes: streamed(draft, frames) };
 }
 
+/**
+ * Writes out the tracks `subtitleFiles` would, in pieces as `subtitleStream` does, from one read.
+ *
+ * A track's pieces come in order, between other tracks' pieces.
+ *
+ * @example
+ * for await (const { track, format, bytes } of subtitleStreams(container)) use(track, format, bytes);
+ */
+export function subtitleStreams(
+  container: Container,
+  options: SubtitleOptions = {},
+): AsyncIterable<SubtitlePiece> {
+  const written = writtenTracks(container, options);
+  const drafts = written.map((track) => draftOf(track) as Draft);
+  const frames = container.frames(written, options);
+  return pieced(drafts, frames);
+}
+
 interface Assembly {
   format: SubtitleFormat;
   start: (out: Spool) => Assembler;
@@ -105,6 +127,7 @@ interface Assembly {
 
 /** A track's file as its frames come. */
 interface Draft {
+  track: Track;
   format: SubtitleFormat;
   add(frame: Frame): void;
   end(): void;
@@ -124,8 +147,16 @@ const FORMATS: ReadonlySet<SubtitleFormat> = new Set<SubtitleFormat>([...TEXT_FO
 /** What a stream gathers before it hands a piece on, as each piece costs its consumer a write. */
 const PIECE_BYTES = 64 * 1024;
 
-function formatsNamed(formats: readonly SubtitleFormat[] | undefined): ReadonlySet<SubtitleFormat> {
-  const named = new Set(formats ?? TEXT_FORMATS);
+function writtenTracks(container: Container, options: SubtitleOptions): Track[] {
+  const { formats, tracks } = { ...options };
+  const byDefault = tracks === undefined ? TEXT_FORMATS : FORMATS;
+  const named: ReadonlySet<SubtitleFormat | null> = formatsNamed(formats ?? byDefault);
+  const asked = tracks ?? container.tracks;
+  return asked.filter((track) => named.has(subtitleFormat(track)) && container.readable(track));
+}
+
+function formatsNamed(formats: Iterable<SubtitleFormat>): ReadonlySet<SubtitleFormat> {
+  const named = new Set(formats);
   for (const format of named) {
     if (!FORMATS.has(format)) throw new TypeError(`unknown format ${String(format)}`);
   }
@@ -168,6 +199,7 @@ function draftOf(track: Track): Draft | null {
   };
   const end = () => assembler.end?.();
   return {
+    track,
     format: assembly.format,
     add,
     end,
@@ -182,10 +214,31 @@ function filed(track: Track, draft: Draft): SubtitleFile {
 }
 
 async function* streamed(draft: Draft, frames: AsyncIterable<Frame>): AsyncGenerator<Bytes> {
+  for await (const piece of pieced([draft], frames)) yield piece.bytes;
+}
+
+async function* pieced(
+  drafts: readonly Draft[],
+  frames: AsyncIterable<Frame>,
+): AsyncGenerator<SubtitlePiece> {
+  const byIndex = new Map(drafts.map((draft) => [draft.track.index, draft]));
+  const handed = new Set<Draft>();
   for await (const frame of frames) {
+    const draft = byIndex.get(frame.trackIndex);
+    if (draft === undefined) continue;
     draft.add(frame);
-    if (draft.waiting() >= PIECE_BYTES) yield draft.drain();
+    if (draft.waiting() >= PIECE_BYTES) {
+      handed.add(draft);
+      yield pieceOf(draft);
+    }
   }
-  draft.end();
-  if (draft.waiting() > 0) yield draft.drain();
+  for (const draft of drafts) {
+    draft.end();
+    // A track with nothing to write still comes out, as subtitleFiles writes it.
+    if (draft.waiting() > 0 || !handed.has(draft)) yield pieceOf(draft);
+  }
+}
+
+function pieceOf(draft: Draft): SubtitlePiece {
+  return { track: draft.track, format: draft.format, bytes: draft.drain() };
 }
