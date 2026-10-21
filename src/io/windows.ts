@@ -5,7 +5,6 @@ import {
   available,
   type IndexFetch,
   LARGE_READ_BYTES,
-  MAX_SPAN_BYTES,
   type Range,
   type SizedSource,
   stopIfAborted,
@@ -147,6 +146,8 @@ interface MarkedRange {
   range: Range;
   isWanted: boolean;
 }
+
+const MAX_SPAN_BYTES = 4 * 1024 ** 2;
 
 function coalesced(
   sorted: readonly MarkedRange[],

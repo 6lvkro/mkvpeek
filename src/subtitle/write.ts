@@ -135,14 +135,17 @@ interface Draft {
   waiting(): number;
 }
 
-const TEXT_FORMATS: ReadonlySet<SubtitleFormat> = new Set<SubtitleFormat>([
-  "ass",
-  "ssa",
-  "srt",
-  "vtt",
-]);
+const TEXTUAL: Readonly<Record<SubtitleFormat, boolean>> = {
+  ass: true,
+  ssa: true,
+  srt: true,
+  vtt: true,
+  sup: false,
+};
 
-const FORMATS: ReadonlySet<SubtitleFormat> = new Set<SubtitleFormat>([...TEXT_FORMATS, "sup"]);
+const FORMATS = Object.keys(TEXTUAL) as readonly SubtitleFormat[];
+
+const TEXT_FORMATS: readonly SubtitleFormat[] = FORMATS.filter((format) => TEXTUAL[format]);
 
 /** What a stream gathers before it hands a piece on, as each piece costs its consumer a write. */
 const PIECE_BYTES = 64 * 1024;
@@ -158,7 +161,7 @@ function writtenTracks(container: Container, options: SubtitleOptions): Track[] 
 function formatsNamed(formats: Iterable<SubtitleFormat>): ReadonlySet<SubtitleFormat> {
   const named = new Set(formats);
   for (const format of named) {
-    if (!FORMATS.has(format)) throw new TypeError(`unknown format ${String(format)}`);
+    if (!Object.hasOwn(TEXTUAL, format)) throw new TypeError(`unknown format ${String(format)}`);
   }
   return named;
 }

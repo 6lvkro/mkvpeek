@@ -1,13 +1,13 @@
 import type { FetchKnobs, IndexFetch, Trip, WalkFetch } from "../io/source.js";
-import { givenSignal } from "../io/source.js";
-import type { FrameOptions, FramePreset, FrameProgress, FrameVia } from "./contract.js";
+import { givenSignal, MAX_CONCURRENCY } from "../io/source.js";
+import type { FrameOptions, FramePreset, FrameVia } from "./contract.js";
 
 export interface SettledFrameOptions {
   via: FrameVia;
   strict: boolean;
   knobsForIndex: IndexFetch;
   knobsForWalk: WalkFetch;
-  onProgress: ((progress: FrameProgress) => void) | undefined;
+  onProgress: FrameOptions["onProgress"];
   signal: AbortSignal | undefined;
 }
 
@@ -26,7 +26,6 @@ export function settledFrameOptions(
   const { concurrency } = options;
   const knobsForIndex = {
     gapBytes: shipped.gapBytes,
-    cueAheadBytes: shipped.cueAheadBytes,
     concurrency: checkedConcurrency(concurrency, INDEX_CONCURRENCY),
   };
   const knobsForWalk = {
@@ -50,28 +49,24 @@ const INDEX_CONCURRENCY = 16;
 
 const TRIP_BLIND: Readonly<FetchKnobs> = {
   gapBytes: 0,
-  cueAheadBytes: 256,
   blockAheadBytes: 0,
   concurrency: 16,
 };
 
 const LOCAL_KNOBS: Readonly<FetchKnobs> = {
   gapBytes: 8 * 1024,
-  cueAheadBytes: 256,
   blockAheadBytes: 2 * 1024 ** 2,
   concurrency: 8,
 };
 
 const MOUNT_KNOBS: Readonly<FetchKnobs> = {
   gapBytes: 16 * 1024,
-  cueAheadBytes: 256,
   blockAheadBytes: 8 * 1024,
   concurrency: 16,
 };
 
 const REMOTE_KNOBS: Readonly<FetchKnobs> = {
   gapBytes: 32 * 1024,
-  cueAheadBytes: 256,
   blockAheadBytes: 8 * 1024,
   concurrency: 16,
 };
@@ -85,8 +80,6 @@ const TUNING: Record<FramePreset, TuningByTrip> = {
     remote: { ...REMOTE_KNOBS, blockAheadBytes: 64 * 1024 },
   },
 };
-
-const MAX_CONCURRENCY = 64;
 
 function checkedConcurrency(given: number | undefined, shipped: number): number {
   const concurrency = given ?? shipped;

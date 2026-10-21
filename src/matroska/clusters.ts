@@ -22,12 +22,10 @@ import {
   undoneFrame,
 } from "./block.js";
 import { CLUSTER_PROBE_BYTES, hopTopLevel, readClusterTicks, type SegmentPass } from "./chain.js";
+import type { CuePosition } from "./header.js";
 
 /** The cluster a walk takes over at from another read, and the body offset its blocks must lie past. */
-export interface WalkFrom {
-  clusterPos: number;
-  relPos: number;
-}
+export type WalkFrom = Pick<CuePosition, "clusterPos" | "relPos">;
 
 /**
  * Hands over the claimed tracks' frames cluster by cluster, in file order.

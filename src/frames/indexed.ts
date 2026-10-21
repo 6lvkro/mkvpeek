@@ -51,12 +51,12 @@ export async function* framesByIndex(
   const plan = planFrames(cues, claims, strict);
   const { head } = file;
   const headBytes = head.bytes.length;
-  const stones = stonesOf(file, cues, claims, knobs.cueAheadBytes);
+  const stones = stonesOf(file, cues, claims);
   const rounds: PlannedRound[] = [];
   for (let start = 0; start < plan.length; start += FRAMES_PER_ROUND) {
     const slice = plan.slice(start, start + FRAMES_PER_ROUND);
     const positions = slice.map((p) => p.cue);
-    const blocks = planBlockRanges(positions, knobs.cueAheadBytes);
+    const blocks = planBlockRanges(positions);
     const toBuy = unheld(blocks, head);
     const spans = coalesceAcross(toBuy, stones, knobs);
     const round = { slice, spans, bytes: bytesOf(spans) };
@@ -105,12 +105,10 @@ interface TimedRun {
   clusterTicks: number;
 }
 
-interface ProbedRound {
-  windows: WindowIndex;
+interface ProbedRound extends FetchedGroup {
   timed: Timed;
   /** Each cue's block bytes the probes left unbought. */
   tails: (Range | null)[];
-  unplannedBytes: number;
 }
 
 /** A run of a round's cues, read and handed over together. */
@@ -161,12 +159,7 @@ function planFrames(
 }
 
 /** The blocks the other readable tracks' cues name, which may close the holes between this read's. */
-function stonesOf(
-  file: FrameFile,
-  byTrack: CueIndex,
-  claims: readonly TrackClaim[],
-  cueAheadBytes: number,
-): Range[] {
+function stonesOf(file: FrameFile, byTrack: CueIndex, claims: readonly TrackClaim[]): Range[] {
   const chosen = new Set(claims.map(({ entry }) => entry.number));
   const givesStones = (entry: TrackEntry) =>
     !chosen.has(entry.number) && claimFor(entry, file) !== null;
@@ -175,7 +168,7 @@ function stonesOf(
   const cues = [...byTrack]
     .filter(([number]) => numbers.has(number))
     .flatMap(([, positions]) => positions);
-  const blocks = planBlockRanges(cues, cueAheadBytes);
+  const blocks = planBlockRanges(cues);
   return unheld(blocks, file.head);
 }
 
@@ -218,11 +211,7 @@ async function* byRound(
   }
 }
 
-/**
- * The windows a round's probes buy, which of its cues are read by their own time, and what each cue's block still lacks.
- *
- * Every other cue has its cluster's head bought.
- */
+/** A cue not read by its own time has its cluster's head bought. */
 async function probeRound(
   invariants: RoundInvariants,
   { slice, spans }: PlannedRound,
@@ -258,7 +247,7 @@ async function probeRound(
   for (let i = 0; i < untimedAt.length; i += 1) {
     tails[untimedAt[i] as number] = untimedTails[i] ?? null;
   }
-  return { windows, timed, tails, unplannedBytes: bytesOf(extra) };
+  return { windows, unplannedBytes: bytesOf(extra), timed, tails };
 }
 
 /** Runs of cues whose blocks lack at most the budget between them, or one cue that alone lacks more. */

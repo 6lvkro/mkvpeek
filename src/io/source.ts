@@ -48,14 +48,12 @@ export interface Range {
 export interface FetchKnobs {
   /** Two ranges closer than this are fetched as one, gap included. */
   gapBytes: number;
-  /** How far past its stated size to look at each point the plan names. */
-  cueAheadBytes: number;
   /** How far past a block the walk reads ahead when it reads that block. */
   blockAheadBytes: number;
   concurrency: number;
 }
 
-export type IndexFetch = Pick<FetchKnobs, "gapBytes" | "cueAheadBytes" | "concurrency">;
+export type IndexFetch = Pick<FetchKnobs, "gapBytes" | "concurrency">;
 
 export type WalkFetch = Pick<FetchKnobs, "blockAheadBytes" | "concurrency">;
 
@@ -90,10 +88,7 @@ export const HEAD_BYTES = 128 * 1024;
  */
 export const LARGE_READ_BYTES = 16 * 1024;
 
-export const MAX_SPAN_BYTES = 4 * 1024 ** 2;
-
-/** The most any stored stream is undone to, where ffmpeg stops growing a frame's buffer. */
-export const MAX_INFLATED_BYTES = 10_000_000;
+export const MAX_CONCURRENCY = 64;
 
 export const lend = (into: Uint8Array | undefined, bounded: number): Uint8Array | null =>
   into !== undefined && into.length >= bounded ? into.subarray(0, bounded) : null;

@@ -2,7 +2,7 @@
 
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
-import { type Inflate, MAX_INFLATED_BYTES } from "../io/source.js";
+import type { Inflate } from "../io/source.js";
 
 export interface ContentEncoding {
   order: number;
@@ -79,6 +79,9 @@ const HEADER_STRIPPING_ALGO = 3;
 const CODEC_PRIVATE_SCOPE = 2;
 
 const KNOWN_SCOPES = FRAMES_SCOPE | CODEC_PRIVATE_SCOPE;
+
+/** The most any stored stream is undone to, where ffmpeg stops growing a frame's buffer. */
+const MAX_INFLATED_BYTES = 10_000_000;
 
 const MAX_AMPLIFICATION = 64;
 

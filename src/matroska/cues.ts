@@ -70,10 +70,10 @@ export function readCuedFrame(
   return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, claim);
 }
 
-export function planBlockRanges(points: readonly CuePosition[], cueAheadBytes: number): Range[] {
+export function planBlockRanges(points: readonly CuePosition[]): Range[] {
   const ranges: Range[] = [];
   for (const { clusterPos, relPos } of points) {
-    ranges.push({ at: clusterPos + relPos, length: MAX_CLUSTER_HEADER_BYTES + cueAheadBytes });
+    ranges.push({ at: clusterPos + relPos, length: MAX_CLUSTER_HEADER_BYTES + CUE_AHEAD_BYTES });
   }
   return ranges;
 }
@@ -141,6 +141,8 @@ const CLUSTER_ID_BYTES = 4;
 const MIN_CLUSTER_HEADER_BYTES = CLUSTER_ID_BYTES + 1;
 
 const MAX_CLUSTER_HEADER_BYTES = CLUSTER_ID_BYTES + E.MAX_VINT_BYTES;
+
+const CUE_AHEAD_BYTES = 256;
 
 const unheldBlock = (windows: WindowIndex, blockAt: number, outer: Element): Range | null =>
   windows.find(blockAt, outer.next - blockAt) === null
