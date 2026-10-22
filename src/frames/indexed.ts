@@ -11,6 +11,8 @@ import {
 import { coalesceAcross, fetchSpans, WindowIndex } from "../io/windows.js";
 import { plainFrame, undoneFrame } from "../matroska/block.js";
 import { CLUSTER_PROBE_BYTES } from "../matroska/chain.js";
+import type { CueIndex, CuePosition } from "../matroska/cues.js";
+import type { TrackEntry } from "../matroska/header.js";
 import {
   type ClusterMemo,
   type CuedBlock,
@@ -21,8 +23,7 @@ import {
   pointShortfalls,
   readCuedFrame,
   readFrame,
-} from "../matroska/cues.js";
-import type { CueIndex, CuePosition, TrackEntry } from "../matroska/header.js";
+} from "../matroska/indexed.js";
 import { RefusalError } from "../vocabulary.js";
 import { claimFor, type FrameFile, type TrackClaim, vouchable } from "./claim.js";
 import type { Frame } from "./contract.js";

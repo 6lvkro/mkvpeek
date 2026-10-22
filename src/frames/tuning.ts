@@ -37,7 +37,7 @@ export function settledFrameOptions(
   return { via, strict, knobsForIndex, knobsForWalk, onProgress, signal };
 }
 
-type TuningByTrip = Record<Trip, Readonly<FetchKnobs>>;
+type TuningByTrip = Record<Trip, FetchKnobs>;
 
 const DEFAULT_VIA: FrameVia = "both";
 
@@ -47,25 +47,25 @@ const DEFAULT_PRESET: FramePreset = "balanced";
 
 const INDEX_CONCURRENCY = 16;
 
-const TRIP_BLIND: Readonly<FetchKnobs> = {
+const TRIP_BLIND: FetchKnobs = {
   gapBytes: 0,
   blockAheadBytes: 0,
   concurrency: 16,
 };
 
-const LOCAL_KNOBS: Readonly<FetchKnobs> = {
+const LOCAL_KNOBS: FetchKnobs = {
   gapBytes: 8 * 1024,
   blockAheadBytes: 2 * 1024 ** 2,
   concurrency: 8,
 };
 
-const MOUNT_KNOBS: Readonly<FetchKnobs> = {
+const MOUNT_KNOBS: FetchKnobs = {
   gapBytes: 16 * 1024,
   blockAheadBytes: 8 * 1024,
   concurrency: 16,
 };
 
-const REMOTE_KNOBS: Readonly<FetchKnobs> = {
+const REMOTE_KNOBS: FetchKnobs = {
   gapBytes: 32 * 1024,
   blockAheadBytes: 8 * 1024,
   concurrency: 16,

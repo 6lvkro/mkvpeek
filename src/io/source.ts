@@ -51,10 +51,10 @@ export type WalkFetch = Pick<FetchKnobs, "blockAheadBytes" | "concurrency">;
 /** What a preset sets for one trip. */
 export interface FetchKnobs {
   /** Two ranges closer than this are fetched as one, gap included. */
-  gapBytes: number;
+  readonly gapBytes: number;
   /** How far past a block the walk reads ahead when it reads that block. */
-  blockAheadBytes: number;
-  concurrency: number;
+  readonly blockAheadBytes: number;
+  readonly concurrency: number;
 }
 
 /**

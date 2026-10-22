@@ -32,8 +32,6 @@ type Unread = "unread";
  */
 export class GrammarError extends Error {}
 
-export const DEFAULT_TIMESTAMP_SCALE = 1_000_000;
-
 export const MAX_VINT_BYTES = 8;
 
 /**

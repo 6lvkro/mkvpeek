@@ -1,6 +1,7 @@
 import type { Inflate } from "../io/source.js";
+import type { CueIndex } from "../matroska/cues.js";
 import { FRAMES_SCOPE, type Undo, undoFor } from "../matroska/encoding.js";
-import type { CueIndex, OpenedSegment, TrackEntry } from "../matroska/header.js";
+import type { OpenedSegment, TrackEntry } from "../matroska/header.js";
 import { type TrackType, tagsOf, trackTypeOf } from "../tracks.js";
 import type { ContainerInfo } from "../vocabulary.js";
 

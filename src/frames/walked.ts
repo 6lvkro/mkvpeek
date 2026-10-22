@@ -1,5 +1,5 @@
 import type { WalkFetch, Watch } from "../io/source.js";
-import { type WalkFrom, walkFrames } from "../matroska/clusters.js";
+import { type WalkFrom, walkFrames } from "../matroska/walked.js";
 import type { FrameFile, TrackClaim } from "./claim.js";
 import type { Frame } from "./contract.js";
 import { frameOn, timelineOf } from "./timeline.js";

@@ -85,7 +85,7 @@ export function coalesceAcross(
     ...near.map((range) => ({ range, isWanted: false })),
   ].sort((a, b) => a.range.at - b.range.at);
   const spans: Range[] = [];
-  for (const group of coalesced(marked, knobs)) {
+  for (const group of coalesced(marked, knobs.gapBytes)) {
     const first = group.findIndex(({ isWanted }) => isWanted);
     if (first < 0) continue;
     const lastWanted = group.map(({ isWanted }) => isWanted).lastIndexOf(true);
@@ -149,10 +149,7 @@ interface MarkedRange {
 
 const MAX_SPAN_BYTES = 4 * 1024 ** 2;
 
-function coalesced(
-  sorted: readonly MarkedRange[],
-  knobs: Pick<IndexFetch, "gapBytes">,
-): MarkedRange[][] {
+function coalesced(sorted: readonly MarkedRange[], gapBytes: number): MarkedRange[][] {
   const groups: MarkedRange[][] = [];
   let start = 0;
   let end = 0;
@@ -160,7 +157,7 @@ function coalesced(
     const { at, length } = marked.range;
     const reach = Math.max(end, at + length);
     const last = groups.at(-1);
-    if (last !== undefined && at - end <= knobs.gapBytes && reach - start <= MAX_SPAN_BYTES) {
+    if (last !== undefined && at - end <= gapBytes && reach - start <= MAX_SPAN_BYTES) {
       last.push(marked);
       end = reach;
       continue;

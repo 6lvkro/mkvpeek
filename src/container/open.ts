@@ -12,11 +12,11 @@ import {
   stopIfAborted,
   untilAborted,
 } from "../io/source.js";
+import { readAttachments } from "../matroska/attachments.js";
+import { readCues } from "../matroska/cues.js";
 import {
   type OpenedSegment,
   openSegment,
-  readAttachments,
-  readCues,
   readFirstClusterTicks,
   readInfo,
   type TrackEntry,

@@ -1,5 +1,6 @@
 import { linkedSignal, stopIfAborted, watchOver } from "../io/source.js";
-import type { CuePosition, TrackEntry } from "../matroska/header.js";
+import type { CuePosition } from "../matroska/cues.js";
+import type { TrackEntry } from "../matroska/header.js";
 import { refusalOf } from "../refusal.js";
 import { RefusalError } from "../vocabulary.js";
 import { claimFor, type FrameFile, type TrackClaim } from "./claim.js";

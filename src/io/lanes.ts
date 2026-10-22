@@ -1,10 +1,11 @@
 import { onAbort, untilAborted } from "./source.js";
 
-type Gathered<T extends readonly (() => Promise<unknown>)[]> = {
+type Gathered<T extends readonly Task[]> = {
   [K in keyof T]: Awaited<ReturnType<T[K]>>;
 };
 
-/** A queue whose halt is shared. */
+type Task = () => Promise<unknown>;
+
 export class HaltableQueue<T> {
   #items: T[] = [];
   #next = 0;
@@ -37,11 +38,7 @@ export class HaltableQueue<T> {
     this.#onHalt();
   }
 
-  async drain(
-    concurrency: number,
-    each: (item: T) => Promise<boolean>,
-    signal?: AbortSignal,
-  ): Promise<void> {
+  async drain(concurrency: number, each: Each<T>, signal?: AbortSignal): Promise<void> {
     const take = () => this.#take();
     const halt = () => this.halt();
     await runWorkers(take, halt, concurrency, each, signal);
@@ -68,12 +65,12 @@ export class HaltableQueue<T> {
 }
 
 /** A heterogeneous batch, each slot answering in its own type. */
-export async function gathered<T extends readonly (() => Promise<unknown>)[]>(
+export async function gathered<T extends readonly Task[]>(
   tasks: T,
   concurrency: number,
   signal?: AbortSignal,
 ): Promise<Gathered<T>> {
-  const run = (task: () => Promise<unknown>) => task();
+  const run = (task: Task) => task();
   const out = await inParallel(tasks, concurrency, run, signal);
   return out as Gathered<T>;
 }
@@ -110,11 +107,14 @@ export async function joinOrAbort(
   }
 }
 
+/** Answers whether to go on; false stops every lane. */
+type Each<T> = (item: T) => Promise<boolean>;
+
 async function runWorkers<T>(
   take: () => Promise<T | null>,
   halt: () => void,
   concurrency: number,
-  each: (item: T) => Promise<boolean>,
+  each: Each<T>,
   signal: AbortSignal | undefined,
 ): Promise<void> {
   let stopped = false;
