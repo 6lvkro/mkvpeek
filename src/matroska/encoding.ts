@@ -21,28 +21,6 @@ interface ContentCompression {
 
 export const FRAMES_SCOPE = 1;
 
-export function undoFor(
-  encodings: readonly ContentEncoding[] | null,
-  scope: number,
-  inflate: Inflate,
-): Undo | null | false {
-  if (encodings === null || encodings.some(reachesPastKnownScopes)) return false;
-  const covering = encodings.filter((encoding) => (encoding.scope & scope) !== 0);
-  const ordered = covering.sort((a, b) => b.order - a.order);
-  const steps = ordered.map((encoding) => stepOf(encoding, inflate));
-  const undos = steps.filter((step) => step !== null);
-  if (undos.length < steps.length) return false;
-  if (undos.length === 0) return null;
-  return async (stored) => {
-    const most = Math.min(MAX_INFLATED_BYTES, MAX_AMPLIFICATION * stored.length);
-    let bytes = stored;
-    for (const undo of undos) {
-      bytes = await undo(bytes, most);
-    }
-    return bytes;
-  };
-}
-
 export function encodingsIn(window: Window, list: Element): ContentEncoding[] | null {
   try {
     const encodings: ContentEncoding[] = [];
@@ -69,6 +47,28 @@ export async function codecPrivateOf(
   if (undo === null) return stored;
   if (undo === false) return null;
   return undo(stored).catch(() => null);
+}
+
+export function undoFor(
+  encodings: readonly ContentEncoding[] | null,
+  scope: number,
+  inflate: Inflate,
+): Undo | null | false {
+  if (encodings === null || encodings.some(reachesPastKnownScopes)) return false;
+  const covering = encodings.filter((encoding) => (encoding.scope & scope) !== 0);
+  const ordered = covering.sort((a, b) => b.order - a.order);
+  const steps = ordered.map((encoding) => stepOf(encoding, inflate));
+  const undos = steps.filter((step) => step !== null);
+  if (undos.length < steps.length) return false;
+  if (undos.length === 0) return null;
+  return async (stored) => {
+    const most = Math.min(MAX_INFLATED_BYTES, MAX_AMPLIFICATION * stored.length);
+    let bytes = stored;
+    for (const undo of undos) {
+      bytes = await undo(bytes, most);
+    }
+    return bytes;
+  };
 }
 
 /** The ContentCompAlgo a ContentCompression means when it states none. */

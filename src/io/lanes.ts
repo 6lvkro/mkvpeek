@@ -67,6 +67,17 @@ export class HaltableQueue<T> {
   }
 }
 
+/** A heterogeneous batch, each slot answering in its own type. */
+export async function gathered<T extends readonly (() => Promise<unknown>)[]>(
+  tasks: T,
+  concurrency: number,
+  signal?: AbortSignal,
+): Promise<Gathered<T>> {
+  const run = (task: () => Promise<unknown>) => task();
+  const out = await inParallel(tasks, concurrency, run, signal);
+  return out as Gathered<T>;
+}
+
 export async function inParallel<T, R>(
   items: readonly T[],
   concurrency: number,
@@ -87,17 +98,6 @@ export async function inParallel<T, R>(
   };
   await runWorkers(take, halt, Math.min(concurrency, items.length), store, signal);
   return out;
-}
-
-/** A heterogeneous batch, each slot answering in its own type. */
-export async function gathered<T extends readonly (() => Promise<unknown>)[]>(
-  tasks: T,
-  concurrency: number,
-  signal?: AbortSignal,
-): Promise<Gathered<T>> {
-  const run = (task: () => Promise<unknown>) => task();
-  const out = await inParallel(tasks, concurrency, run, signal);
-  return out as Gathered<T>;
 }
 
 export async function joinOrAbort(

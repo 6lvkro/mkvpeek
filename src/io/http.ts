@@ -69,17 +69,6 @@ export function whyInadmissible(parsed: URL): string | null {
   return null;
 }
 
-async function* chunksOf(
-  reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
-): AsyncIterable<Uint8Array> {
-  if (reader === undefined) return;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    yield value;
-  }
-}
-
 function fetchTransport(url: string, options: UrlOptions): RangeTransport {
   const { headers = {}, fetch: fetchImpl = globalThis.fetch } = options;
   admittedUrl(url);
@@ -106,6 +95,17 @@ function fetchTransport(url: string, options: UrlOptions): RangeTransport {
       cancel,
     };
   };
+}
+
+async function* chunksOf(
+  reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
+): AsyncIterable<Uint8Array> {
+  if (reader === undefined) return;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    yield value;
+  }
 }
 
 function speaksHttp(parsed: URL): boolean {

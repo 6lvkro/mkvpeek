@@ -194,25 +194,25 @@ interface WalkInvariants {
   from: WalkFrom | undefined;
 }
 
-/** For a cluster without a size, `end` is the end of the Segment. */
-interface ClusterSpan {
-  at: number;
-  el: Element | OpenElement;
-  end: number;
-}
+type WalkedCluster = (SweptFrames & { carried: Loaned }) | BlockClause;
 
 interface SweptFrames {
   frames: BlockFrame[];
   end: number;
 }
 
-type WalkedCluster = (SweptFrames & { carried: Loaned }) | BlockClause;
-
 /** Its window is the one the hop read the head from, and the walk's first probe. */
 interface HoppedCluster {
   index: number;
   span: ClusterSpan;
   window: Window;
+}
+
+/** For a cluster without a size, `end` is the end of the Segment. */
+interface ClusterSpan {
+  at: number;
+  el: Element | OpenElement;
+  end: number;
 }
 
 interface Loans {

@@ -141,13 +141,12 @@ export const ID = {
   },
 } as const;
 
-/** Decoded as a sized element. */
-export const decoded = (el: Element | OpenElement | Unread): el is Element =>
-  typeof el !== "string" && !("open" in el);
-
 /** Decoded as a sized element that ends within its parent. */
 export const fits = (el: Element | OpenElement | Unread, end: number): el is Element =>
   decoded(el) && el.next <= end;
+
+export const decoded = (el: Element | OpenElement | Unread): el is Element =>
+  typeof el !== "string" && !("open" in el);
 
 export const covers = (window: Window, at: number, length: number): boolean =>
   offsetOf(window, at, length) >= 0;
@@ -174,31 +173,15 @@ export function vintLength(lead: number): number {
   return length;
 }
 
-/**
- * The value of a vint whose length is known.
- *
- * `id` keeps the marker bit so the value compares to the constants as is; `size` drops it.
- */
-export function vintValue(
-  bytes: Uint8Array,
-  start: number,
-  length: number,
-  as: "id" | "size",
-): number {
-  const lead = bytes[start] as number;
-  let value = as === "id" ? lead : lead & (ALL_BITS >> length);
-  for (let i = 1; i < length; i++) {
-    value = value * 256 + (bytes[start + i] as number);
+export function* children(window: Window, body: number, size: number): Generator<Element> {
+  let at = body;
+  const end = body + size;
+  while (at < end) {
+    const el = readElement(window, at);
+    if (!fits(el, end)) throw new GrammarError();
+    yield el;
+    at = el.next;
   }
-  return value;
-}
-
-export function uintValue(bytes: Uint8Array, start: number, size: number): number {
-  let value = 0;
-  for (let i = 0; i < size; i++) {
-    value = value * 256 + (bytes[start + i] as number);
-  }
-  return value;
 }
 
 export function readElement(window: Window, at: number): Element | OpenElement | Unread {
@@ -221,15 +204,23 @@ export function readElement(window: Window, at: number): Element | OpenElement |
   return { id, size, body, next: body + size };
 }
 
-export function* children(window: Window, body: number, size: number): Generator<Element> {
-  let at = body;
-  const end = body + size;
-  while (at < end) {
-    const el = readElement(window, at);
-    if (!fits(el, end)) throw new GrammarError();
-    yield el;
-    at = el.next;
+/**
+ * The value of a vint whose length is known.
+ *
+ * `id` keeps the marker bit so the value compares to the constants as is; `size` drops it.
+ */
+export function vintValue(
+  bytes: Uint8Array,
+  start: number,
+  length: number,
+  as: "id" | "size",
+): number {
+  const lead = bytes[start] as number;
+  let value = as === "id" ? lead : lead & (ALL_BITS >> length);
+  for (let i = 1; i < length; i++) {
+    value = value * 256 + (bytes[start + i] as number);
   }
+  return value;
 }
 
 export function readFloat(window: Window, el: Element): number | null {
@@ -244,6 +235,14 @@ export function readUint(window: Window, el: Element): number {
   const start = offsetOf(window, el.body, el.size);
   if (start < 0) throw new GrammarError();
   return uintValue(window.bytes, start, el.size);
+}
+
+export function uintValue(bytes: Uint8Array, start: number, size: number): number {
+  let value = 0;
+  for (let i = 0; i < size; i++) {
+    value = value * 256 + (bytes[start + i] as number);
+  }
+  return value;
 }
 
 export function readUid(window: Window, el: Element): string | null {
@@ -287,17 +286,17 @@ const KEEPS_BOM = { ignoreBOM: true };
 
 const UTF8 = new TextDecoder("utf-8", KEEPS_BOM);
 
-function offsetOf(window: Window, at: number, length: number): number {
-  const start = at - window.at;
-  return start < 0 || start + length > window.bytes.length ? -1 : start;
-}
-
 function heldVintLength(window: Window, at: number): number {
   const start = offsetOf(window, at, 1);
   if (start < 0) return 0;
   const length = vintLength(window.bytes[start] as number);
   if (length > MAX_VINT_BYTES) return 0;
   return offsetOf(window, at, length) < 0 ? 0 : length;
+}
+
+function offsetOf(window: Window, at: number, length: number): number {
+  const start = at - window.at;
+  return start < 0 || start + length > window.bytes.length ? -1 : start;
 }
 
 /** The all-ones shape of a size vint, which means the size is unknown. */

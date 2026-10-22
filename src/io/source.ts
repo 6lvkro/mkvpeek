@@ -1,3 +1,8 @@
+export interface SizedSource {
+  source: Source;
+  fileSize: number;
+}
+
 /** Anything addressable by offset and length can be a source. */
 export interface Source {
   /**
@@ -34,15 +39,14 @@ export interface Source {
  */
 export type Trip = "local" | "mount" | "remote";
 
-export interface SizedSource {
-  source: Source;
-  fileSize: number;
-}
-
 export interface Range {
   at: number;
   length: number;
 }
+
+export type IndexFetch = Pick<FetchKnobs, "gapBytes" | "concurrency">;
+
+export type WalkFetch = Pick<FetchKnobs, "blockAheadBytes" | "concurrency">;
 
 /** What a preset sets for one trip. */
 export interface FetchKnobs {
@@ -52,10 +56,6 @@ export interface FetchKnobs {
   blockAheadBytes: number;
   concurrency: number;
 }
-
-export type IndexFetch = Pick<FetchKnobs, "gapBytes" | "concurrency">;
-
-export type WalkFetch = Pick<FetchKnobs, "blockAheadBytes" | "concurrency">;
 
 /**
  * Undoes zlib's deflate into a buffer of its own.
@@ -95,16 +95,6 @@ export const lend = (into: Uint8Array | undefined, bounded: number): Uint8Array 
 
 export const givenSignal = (signal: AbortSignal | null | undefined): AbortSignal | undefined =>
   signal ?? undefined;
-
-export function abortReason(signal: AbortSignal | undefined): Error | null {
-  if (signal?.aborted !== true) return null;
-  const { reason: cause } = signal;
-  try {
-    return cause instanceof Error ? cause : new Error(String(cause));
-  } catch {
-    return new Error("aborted", { cause });
-  }
-}
 
 export function stopIfAborted(signal: AbortSignal | undefined): void {
   const reason = abortReason(signal);
@@ -174,4 +164,14 @@ export function onAbort(signal: AbortSignal | undefined, run: () => void): () =>
   }
   signal.addEventListener("abort", run, { once: true });
   return () => signal.removeEventListener("abort", run);
+}
+
+export function abortReason(signal: AbortSignal | undefined): Error | null {
+  if (signal?.aborted !== true) return null;
+  const { reason: cause } = signal;
+  try {
+    return cause instanceof Error ? cause : new Error(String(cause));
+  } catch {
+    return new Error("aborted", { cause });
+  }
 }

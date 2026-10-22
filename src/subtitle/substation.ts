@@ -41,16 +41,16 @@ export function startSubstation({ text: script, format }: Script, out: Spool): A
   return { add, end };
 }
 
+interface QueuedDialogue extends Dialogue {
+  arrival: number;
+}
+
 interface Dialogue {
   order: number;
   layer: string;
   start: number;
   end: number;
   text: Uint8Array;
-}
-
-interface QueuedDialogue extends Dialogue {
-  arrival: number;
 }
 
 interface LeadingNumber {

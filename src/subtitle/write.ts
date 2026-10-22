@@ -166,6 +166,26 @@ function formatsNamed(formats: Iterable<SubtitleFormat>): ReadonlySet<SubtitleFo
   return named;
 }
 
+function draftOf(track: Track): Draft | null {
+  const assembly = assemblyOf(track);
+  if (assembly === null) return null;
+  const out = new Spool();
+  const assembler = assembly.start(out);
+  const add = (frame: Frame) => {
+    const own = frame.trackIndex === track.index && frame.data.length > 0;
+    if (own) assembler.add(frame);
+  };
+  const end = () => assembler.end?.();
+  return {
+    track,
+    format: assembly.format,
+    add,
+    end,
+    drain: () => out.drain(),
+    waiting: () => out.waiting,
+  };
+}
+
 function assemblyOf(track: Track): Assembly | null {
   switch (track.codecId) {
     case "S_TEXT/ASS":
@@ -189,26 +209,6 @@ function substationAssembly(track: Track): Assembly | null {
   const script = substationScript(track);
   if (script === null) return null;
   return { format: script.format, start: (out) => startSubstation(script, out) };
-}
-
-function draftOf(track: Track): Draft | null {
-  const assembly = assemblyOf(track);
-  if (assembly === null) return null;
-  const out = new Spool();
-  const assembler = assembly.start(out);
-  const add = (frame: Frame) => {
-    const own = frame.trackIndex === track.index && frame.data.length > 0;
-    if (own) assembler.add(frame);
-  };
-  const end = () => assembler.end?.();
-  return {
-    track,
-    format: assembly.format,
-    add,
-    end,
-    drain: () => out.drain(),
-    waiting: () => out.waiting,
-  };
 }
 
 function filed(track: Track, draft: Draft): SubtitleFile {

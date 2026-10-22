@@ -11,44 +11,6 @@ export interface Frame {
   data: Uint8Array;
 }
 
-/** What a caller can say about the cost of a read. */
-export interface FrameTuning {
-  preset?: FramePreset;
-  /**
-   * Concurrent range requests on the index path, and lanes on the walk.
-   *
-   * An integer of at least 1, or the call throws a RangeError, and past 64 it is read as 64.
-   *
-   * WARN: on a network path this is the number of open connections,
-   * so **mind the target server's socket limit.**
-   */
-  concurrency?: number;
-}
-
-/**
- * - `balanced`: (default) the knee of the time-transfer curve
- *
- * - `fastest`: minimises time.
- *
- * - `leanest`: minimises transfer.
- */
-export type FramePreset = "balanced" | "fastest" | "leanest";
-
-export type FrameFinder = "index" | "walk";
-
-/**
- * The policy for finding a track's frames.
- *
- * - `index`: follows the container's Cues and picks up only the frames.
- * Fast, but a muxer may have written no index, so it accepts fewer containers than `walk`.
- * It can refuse after frames it has handed over.
- *
- * - `walk`: visits every cluster. Slow, reading block by block, but it answers without an index.
- *
- * - `both`: (default) `index` first, then `walk` wherever the index refused.
- */
-export type FrameVia = "both" | FrameFinder;
-
 /**
  * An unknown `via` or `preset`, or a `strict` that is not a boolean,
  * throws a TypeError when `frames` is called.
@@ -85,6 +47,42 @@ export interface FrameOptions extends FrameTuning, Abortable {
   onProgress?: (progress: FrameProgress) => void;
 }
 
+/** What a caller can say about the cost of a read. */
+export interface FrameTuning {
+  preset?: FramePreset;
+  /**
+   * Concurrent range requests on the index path, and lanes on the walk.
+   *
+   * An integer of at least 1, or the call throws a RangeError, and past 64 it is read as 64.
+   *
+   * On a network path this is the number of open connections,
+   * so **mind the target server's socket limit.**
+   */
+  concurrency?: number;
+}
+
+/**
+ * The policy for finding a track's frames.
+ *
+ * - `index`: follows the container's Cues and picks up only the frames.
+ * Fast, but a muxer may have written no index, so it accepts fewer containers than `walk`.
+ * It can refuse after frames it has handed over.
+ *
+ * - `walk`: visits every cluster. Slow, reading block by block, but it answers without an index.
+ *
+ * - `both`: (default) `index` first, then `walk` wherever the index refused.
+ */
+export type FrameVia = "both" | FrameFinder;
+
+/**
+ * - `balanced`: (default) the knee of the time-transfer curve
+ *
+ * - `fastest`: minimises time.
+ *
+ * - `leanest`: minimises transfer.
+ */
+export type FramePreset = "balanced" | "fastest" | "leanest";
+
 /** Told first with the price, before any frame's bytes are fetched, and then as the read goes. */
 export interface FrameProgress {
   /**
@@ -101,3 +99,5 @@ export interface FrameProgress {
    */
   totalBytes: number;
 }
+
+export type FrameFinder = "index" | "walk";

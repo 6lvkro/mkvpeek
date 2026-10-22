@@ -1,9 +1,6 @@
 import type { Track } from "../tracks.js";
 import type { Bytes } from "../vocabulary.js";
 
-/** A subtitle file's format, by its extension. */
-export type SubtitleFormat = "ass" | "ssa" | "srt" | "vtt" | "sup";
-
 export interface SubtitleFile<T = Bytes> {
   track: Track;
   format: SubtitleFormat;
@@ -17,3 +14,6 @@ export interface SubtitlePiece {
   format: SubtitleFormat;
   bytes: Bytes;
 }
+
+/** A subtitle file's format, by its extension. */
+export type SubtitleFormat = "ass" | "ssa" | "srt" | "vtt" | "sup";

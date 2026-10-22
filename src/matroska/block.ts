@@ -26,6 +26,8 @@ export interface StoredFrame {
   undo: Undo | null;
 }
 
+export type BlockClause = (typeof BLOCK_REFUSAL)[keyof typeof BLOCK_REFUSAL];
+
 interface BlockHead {
   trackNumber: number;
   relTicks: number;
@@ -52,8 +54,6 @@ export const BLOCK_REFUSAL = {
   shortHead: "short-head",
   undecodable: "undecodable",
 } as const;
-
-export type BlockClause = (typeof BLOCK_REFUSAL)[keyof typeof BLOCK_REFUSAL];
 
 export const BLOCK_PROBE_BYTES = 32;
 

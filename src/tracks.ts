@@ -1,17 +1,6 @@
 import type { OpenedSegment, TrackEntry } from "./matroska/header.js";
 import type { TrackFlags, TrackTag } from "./vocabulary.js";
 
-export type TrackType =
-  | "video"
-  | "audio"
-  | "complex"
-  | "logo"
-  | "subtitle"
-  | "buttons"
-  | "control"
-  | "metadata"
-  | "unknown";
-
 export interface Track<T extends TrackType = TrackType> {
   type: T;
   /**
@@ -39,6 +28,17 @@ export interface Track<T extends TrackType = TrackType> {
   /** The SimpleTags of every Tag that targets this track's TrackUID. */
   tags: TrackTag[];
 }
+
+export type TrackType =
+  | "video"
+  | "audio"
+  | "complex"
+  | "logo"
+  | "subtitle"
+  | "buttons"
+  | "control"
+  | "metadata"
+  | "unknown";
 
 /** Each call answers tracks of their own, which share nothing with the file or with another call. */
 export const allTracks = (segment: OpenedSegment): Track[] =>

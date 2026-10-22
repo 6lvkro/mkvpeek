@@ -78,15 +78,15 @@ export async function* framesByIndex(
   yield* byRound(invariants, rounds, progressBytes, watch);
 }
 
-interface PlannedCue {
-  claim: TrackClaim;
-  cue: CuePosition;
-}
-
 interface PlannedRound {
   slice: PlannedCue[];
   spans: Range[];
   bytes: number;
+}
+
+interface PlannedCue {
+  claim: TrackClaim;
+  cue: CuePosition;
 }
 
 interface RoundInvariants {
@@ -111,15 +111,15 @@ interface ProbedRound extends FetchedGroup {
   tails: (Range | null)[];
 }
 
+interface FetchedGroup {
+  windows: WindowIndex;
+  unplannedBytes: number;
+}
+
 /** A run of a round's cues, read and handed over together. */
 interface Group {
   from: number;
   to: number;
-}
-
-interface FetchedGroup {
-  windows: WindowIndex;
-  unplannedBytes: number;
 }
 
 /** The blocks of a slice's cues read by their own time, each at its cue's place in the slice. */
@@ -250,58 +250,6 @@ async function probeRound(
   return { windows, unplannedBytes: bytesOf(extra), timed, tails };
 }
 
-/** Runs of cues whose blocks lack at most the budget between them, or one cue that alone lacks more. */
-function* groupsOf(tails: readonly (Range | null)[], budget: number): Generator<Group> {
-  let from = 0;
-  let bytes = 0;
-  for (let at = 0; at < tails.length; at += 1) {
-    const length = tails[at]?.length ?? 0;
-    if (at > from && bytes + length > budget) {
-      yield { from, to: at };
-      from = at;
-      bytes = 0;
-    }
-    bytes += length;
-  }
-  yield { from, to: tails.length };
-}
-
-/** Where the leading timed cues' tails fit the budget, as those need no probe and so ride with the probes. */
-function leadingTails(timed: Timed, tails: readonly (Range | null)[], budget: number): number[] {
-  const leading: number[] = [];
-  let bytes = 0;
-  for (let at = 0; at < timed.length && timed[at] !== undefined; at += 1) {
-    const tail = tails[at];
-    if (tail === null || tail === undefined) continue;
-    if (leading.length > 0 && bytes + tail.length > budget) break;
-    leading.push(at);
-    bytes += tail.length;
-  }
-  return leading;
-}
-
-async function fetchGroup(
-  { sized, knobs, head }: RoundInvariants,
-  { windows, tails }: ProbedRound,
-  { from, to }: Group,
-  signal: AbortSignal,
-): Promise<FetchedGroup> {
-  const lacking = tails.slice(from, to).filter((tail) => tail !== null);
-  const toBuy = unheld(lacking, head);
-  const extra = coalesceAcross(toBuy, [], knobs);
-  const fetched = await fetchSpans(sized, extra, knobs.concurrency, signal);
-  return { windows: new WindowIndex(fetched, undefined, windows), unplannedBytes: bytesOf(extra) };
-}
-
-function unheldHeads(windows: WindowIndex, clusters: Iterable<number>, fileSize: number): number[] {
-  const unheldAt: number[] = [];
-  for (const at of new Set(clusters)) {
-    const need = available(at, CLUSTER_PROBE_BYTES, fileSize);
-    if (windows.find(at, need) === null) unheldAt.push(at);
-  }
-  return unheldAt;
-}
-
 /** The cues whose blocks are read by their own time, a cluster's cues all or none. */
 function timedByCue(
   windows: WindowIndex,
@@ -336,6 +284,20 @@ function timedByCue(
   return timed;
 }
 
+function limitAfter(starts: readonly number[], clusterPos: number, segmentEnd: number): number {
+  let low = 0;
+  let high = starts.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((starts[mid] as number) <= clusterPos) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return starts[low] ?? segmentEnd;
+}
+
 function timedRunOf(
   windows: WindowIndex,
   slice: readonly PlannedCue[],
@@ -359,18 +321,56 @@ function timedRunOf(
   return { from, blocks, clusterTicks };
 }
 
-function limitAfter(starts: readonly number[], clusterPos: number, segmentEnd: number): number {
-  let low = 0;
-  let high = starts.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if ((starts[mid] as number) <= clusterPos) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
+function unheldHeads(windows: WindowIndex, clusters: Iterable<number>, fileSize: number): number[] {
+  const unheldAt: number[] = [];
+  for (const at of new Set(clusters)) {
+    const need = available(at, CLUSTER_PROBE_BYTES, fileSize);
+    if (windows.find(at, need) === null) unheldAt.push(at);
   }
-  return starts[low] ?? segmentEnd;
+  return unheldAt;
+}
+
+/** Where the leading timed cues' tails fit the budget, as those need no probe and so ride with the probes. */
+function leadingTails(timed: Timed, tails: readonly (Range | null)[], budget: number): number[] {
+  const leading: number[] = [];
+  let bytes = 0;
+  for (let at = 0; at < timed.length && timed[at] !== undefined; at += 1) {
+    const tail = tails[at];
+    if (tail === null || tail === undefined) continue;
+    if (leading.length > 0 && bytes + tail.length > budget) break;
+    leading.push(at);
+    bytes += tail.length;
+  }
+  return leading;
+}
+
+/** Runs of cues whose blocks lack at most the budget between them, or one cue that alone lacks more. */
+function* groupsOf(tails: readonly (Range | null)[], budget: number): Generator<Group> {
+  let from = 0;
+  let bytes = 0;
+  for (let at = 0; at < tails.length; at += 1) {
+    const length = tails[at]?.length ?? 0;
+    if (at > from && bytes + length > budget) {
+      yield { from, to: at };
+      from = at;
+      bytes = 0;
+    }
+    bytes += length;
+  }
+  yield { from, to: tails.length };
+}
+
+async function fetchGroup(
+  { sized, knobs, head }: RoundInvariants,
+  { windows, tails }: ProbedRound,
+  { from, to }: Group,
+  signal: AbortSignal,
+): Promise<FetchedGroup> {
+  const lacking = tails.slice(from, to).filter((tail) => tail !== null);
+  const toBuy = unheld(lacking, head);
+  const extra = coalesceAcross(toBuy, [], knobs);
+  const fetched = await fetchSpans(sized, extra, knobs.concurrency, signal);
+  return { windows: new WindowIndex(fetched, undefined, windows), unplannedBytes: bytesOf(extra) };
 }
 
 async function readGroup(

@@ -21,6 +21,27 @@ import {
 } from "./chain.js";
 import { type ContentEncoding, codecPrivateOf, encodingsIn } from "./encoding.js";
 
+/** Each track's cue points, by TrackNumber. */
+export type CueIndex = Map<number, CuePosition[]>;
+
+export interface CuePosition {
+  clusterPos: number;
+  relPos: number;
+  ticks: number | null;
+}
+
+/** A Segment whose head, Tracks and Tags are read. */
+export interface OpenedSegment {
+  source: Source;
+  segment: Segment;
+  head: Window;
+  /** Where each top-level element starts, as the head and its SeekHeads state. */
+  offsets: Map<number, number>;
+  trackEntries: TrackEntry[];
+  /** The tags each track states, by TrackUID. */
+  trackTags: Map<string, TrackTag[]>;
+}
+
 export interface TrackEntry {
   index: number;
   number: number;
@@ -35,27 +56,6 @@ export interface TrackEntry {
   codecDelayNs: number;
   /** null when the track states ContentEncodings that do not parse. */
   encodings: ContentEncoding[] | null;
-}
-
-export interface CuePosition {
-  clusterPos: number;
-  relPos: number;
-  ticks: number | null;
-}
-
-/** Each track's cue points, by TrackNumber. */
-export type CueIndex = Map<number, CuePosition[]>;
-
-/** A Segment whose head, Tracks and Tags are read. */
-export interface OpenedSegment {
-  source: Source;
-  segment: Segment;
-  head: Window;
-  /** Where each top-level element starts, as the head and its SeekHeads state. */
-  offsets: Map<number, number>;
-  trackEntries: TrackEntry[];
-  /** The tags each track states, by TrackUID. */
-  trackTags: Map<string, TrackTag[]>;
 }
 
 export async function openSegment(
@@ -167,11 +167,11 @@ type Visit = (at: number, field: Element, window: Window) => Promise<Window | nu
 
 const ELEMENT_PROBE_BYTES = 4096;
 
-/** The most an attached file's name, type, description or UID may take; a larger one is skipped. */
-const MAX_ATTACHED_FIELD_BYTES = 4096;
-
 /** The most that is fetched for one header element, whatever size it states. */
 const MAX_HEADER_ELEMENT_BYTES = 64 * 1024 ** 2;
+
+/** The most an attached file's name, type, description or UID may take; a larger one is skipped. */
+const MAX_ATTACHED_FIELD_BYTES = 4096;
 
 /**
  * The runaway cap of an attachment walk.
@@ -202,39 +202,6 @@ const fetchedOptional = <T>(
     if (fetched === null) return fallback;
     return parse(fetched.window, fetched.element);
   });
-
-function probed(located: Located, at: number, limit: number, held: Window): Promise<Window> {
-  const need = headerNeed(at, limit);
-  if (E.covers(held, at, need)) return Promise.resolve(held);
-  const width = Math.min(ELEMENT_PROBE_BYTES, limit - at);
-  return readPastHead(located, at, width, held);
-}
-
-function flagOf(window: Window, field: Element): boolean {
-  return E.readUint(window, field) === 1;
-}
-
-function simpleTag(window: Window, { size, body }: Element): TrackTag {
-  let name = "";
-  let value = "";
-  for (const part of E.children(window, body, size)) {
-    if (part.id === E.ID.tag.NAME) {
-      name = E.readUtf8(window, part);
-    } else if (part.id === E.ID.tag.STRING) {
-      value = E.readUtf8(window, part);
-    }
-  }
-  return { name, value };
-}
-
-async function optional<T>(fallback: T, read: () => Promise<T>): Promise<T> {
-  try {
-    return await read();
-  } catch (error) {
-    if (!E.isGrammarError(error)) throw error;
-    return fallback;
-  }
-}
 
 async function firstClusterTicksIn(located: Located): Promise<number | null> {
   let at = located.offsets.get(E.ID.segment.CLUSTER);
@@ -290,6 +257,30 @@ function locateTopLevel(head: Window, segment: Segment): Placed {
   return { offsets, chained };
 }
 
+/**
+ * Places what a second SeekHead names.
+ *
+ * RFC 9559 §5.1.1 allows no third, so a SeekHead it names is not followed.
+ *
+ * @see {@link https://www.rfc-editor.org/info/rfc9559/#name-seekhead-element}
+ */
+async function placeChained(located: Located, at: number): Promise<void> {
+  await optional<void>(undefined, async () => {
+    const fetched = await fetchAt(located, E.ID.segment.SEEK_HEAD, at);
+    if (fetched === null) return;
+    placeSeeks(fetched.window, fetched.element, located.segment, located.offsets);
+  });
+}
+
+async function optional<T>(fallback: T, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    if (!E.isGrammarError(error)) throw error;
+    return fallback;
+  }
+}
+
 /** Places what a SeekHead names that nothing placed yet, and answers the SeekHeads it names. */
 function placeSeeks(
   window: Window,
@@ -318,21 +309,6 @@ function placeSeeks(
     }
   }
   return seekHeads;
-}
-
-/**
- * Places what a second SeekHead names.
- *
- * RFC 9559 §5.1.1 allows no third, so a SeekHead it names is not followed.
- *
- * @see {@link https://www.rfc-editor.org/info/rfc9559/#name-seekhead-element}
- */
-async function placeChained(located: Located, at: number): Promise<void> {
-  await optional<void>(undefined, async () => {
-    const fetched = await fetchAt(located, E.ID.segment.SEEK_HEAD, at);
-    if (fetched === null) return;
-    placeSeeks(fetched.window, fetched.element, located.segment, located.offsets);
-  });
 }
 
 function parseCues(window: Window, cues: Element, segment: Segment): CueIndex {
@@ -516,42 +492,8 @@ function parseTracks(window: Window, tracks: Element): TrackEntry[] {
   return entries;
 }
 
-function parseTimestampScale(window: Window, info: Element): number {
-  for (const field of E.children(window, info.body, info.size)) {
-    if (field.id !== E.ID.info.TIMESTAMP_SCALE) continue;
-    const scale = E.readUint(window, field);
-    if (scale > 0) return scale;
-  }
-  return E.DEFAULT_TIMESTAMP_SCALE;
-}
-
-/**
- * Null past the cap or past the parent.
- *
- * A child that does not read ends the walk, which hands back the last window.
- */
-async function eachChildIn(
-  located: Located,
-  parent: Element,
-  held: Window,
-  visit: Visit,
-): Promise<Window | null> {
-  let window = held;
-  let pos = parent.body;
-  let children = 0;
-  while (pos < parent.next) {
-    children += 1;
-    if (children > MAX_ATTACHMENT_CHILDREN) return null;
-    window = await probed(located, pos, parent.next, window);
-    const field = E.readElement(window, pos);
-    if (!E.decoded(field)) return window;
-    if (!E.fits(field, parent.next)) return null;
-    const nextWindow = await visit(pos, field, window);
-    if (nextWindow === null) return null;
-    window = nextWindow;
-    pos = field.next;
-  }
-  return window;
+function flagOf(window: Window, field: Element): boolean {
+  return E.readUint(window, field) === 1;
 }
 
 async function readAttachedFile(
@@ -590,6 +532,42 @@ async function readAttachedFile(
   return last === null ? null : { file: out, window: last };
 }
 
+/**
+ * Null past the cap or past the parent.
+ *
+ * A child that does not read ends the walk, which hands back the last window.
+ */
+async function eachChildIn(
+  located: Located,
+  parent: Element,
+  held: Window,
+  visit: Visit,
+): Promise<Window | null> {
+  let window = held;
+  let pos = parent.body;
+  let children = 0;
+  while (pos < parent.next) {
+    children += 1;
+    if (children > MAX_ATTACHMENT_CHILDREN) return null;
+    window = await probed(located, pos, parent.next, window);
+    const field = E.readElement(window, pos);
+    if (!E.decoded(field)) return window;
+    if (!E.fits(field, parent.next)) return null;
+    const nextWindow = await visit(pos, field, window);
+    if (nextWindow === null) return null;
+    window = nextWindow;
+    pos = field.next;
+  }
+  return window;
+}
+
+function probed(located: Located, at: number, limit: number, held: Window): Promise<Window> {
+  const need = headerNeed(at, limit);
+  if (E.covers(held, at, need)) return Promise.resolve(held);
+  const width = Math.min(ELEMENT_PROBE_BYTES, limit - at);
+  return readPastHead(located, at, width, held);
+}
+
 function parseInfo(window: Window, info: Element): ContainerInfo {
   const scale = parseTimestampScale(window, info);
   const out: ContainerInfo = { ...defaultInfo(), timestampScale: scale };
@@ -609,6 +587,15 @@ function parseInfo(window: Window, info: Element): ContainerInfo {
     }
   }
   return out;
+}
+
+function parseTimestampScale(window: Window, info: Element): number {
+  for (const field of E.children(window, info.body, info.size)) {
+    if (field.id !== E.ID.info.TIMESTAMP_SCALE) continue;
+    const scale = E.readUint(window, field);
+    if (scale > 0) return scale;
+  }
+  return E.DEFAULT_TIMESTAMP_SCALE;
 }
 
 function parseTrackTags(window: Window, tags: Element): Map<string, TrackTag[]> {
@@ -637,4 +624,17 @@ function parseTrackTags(window: Window, tags: Element): Map<string, TrackTag[]> 
     }
   }
   return byUid;
+}
+
+function simpleTag(window: Window, { size, body }: Element): TrackTag {
+  let name = "";
+  let value = "";
+  for (const part of E.children(window, body, size)) {
+    if (part.id === E.ID.tag.NAME) {
+      name = E.readUtf8(window, part);
+    } else if (part.id === E.ID.tag.STRING) {
+      value = E.readUtf8(window, part);
+    }
+  }
+  return { name, value };
 }

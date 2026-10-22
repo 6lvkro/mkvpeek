@@ -38,6 +38,17 @@ export interface Platform {
   inflate: Inflate;
 }
 
+export async function peekWith(
+  platform: Platform,
+  target: Target,
+  options: Abortable = {},
+): Promise<Listing> {
+  const container = await openWith(platform, target, options);
+  const { tracks, info } = container;
+  await container.close();
+  return { tracks, info };
+}
+
 export async function openWith(
   platform: Platform,
   target: Target,
@@ -50,17 +61,6 @@ export async function openWith(
   } catch (error) {
     throw refusalOf(error, signal);
   }
-}
-
-export async function peekWith(
-  platform: Platform,
-  target: Target,
-  options: Abortable = {},
-): Promise<Listing> {
-  const container = await openWith(platform, target, options);
-  const { tracks, info } = container;
-  await container.close();
-  return { tracks, info };
 }
 
 type PartRead<T> = (signal: AbortSignal) => Promise<T>;
@@ -160,6 +160,20 @@ function withPendingReads(source: Source, pending: Set<Promise<unknown>>): Sourc
   return { ...source, read };
 }
 
+function fileOf(
+  opened: OpenedSegment,
+  info: ContainerInfo,
+  inflate: Inflate,
+  closing: AbortSignal,
+): FrameFile {
+  const firstClusterTicks = sharedAndKept(
+    (signal) => readFirstClusterTicks(opened, signal),
+    closing,
+  );
+  const cues = sharedAndKept((signal) => readCues(opened, signal), closing);
+  return { ...opened, info, inflate, firstClusterTicks, cues };
+}
+
 /**
  * A part read once for the callers that ask while it is read, and kept once a read of it succeeds.
  *
@@ -193,20 +207,6 @@ function sharedAndKept<T>(read: PartRead<T>, closing: AbortSignal): PartRead<T> 
       }
     }
   };
-}
-
-function fileOf(
-  opened: OpenedSegment,
-  info: ContainerInfo,
-  inflate: Inflate,
-  closing: AbortSignal,
-): FrameFile {
-  const firstClusterTicks = sharedAndKept(
-    (signal) => readFirstClusterTicks(opened, signal),
-    closing,
-  );
-  const cues = sharedAndKept((signal) => readCues(opened, signal), closing);
-  return { ...opened, info, inflate, firstClusterTicks, cues };
 }
 
 function entriesOf(file: FrameFile, tracks: readonly Track[]): TrackEntry[] {

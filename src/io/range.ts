@@ -9,12 +9,7 @@ import {
   type Source,
 } from "./source.js";
 
-export interface RangeReply {
-  status: number;
-  header(name: string): string | null;
-  body: AsyncIterable<Uint8Array>;
-  cancel(): Promise<void>;
-}
+export type OwnedTransport = RangeTransport & { dispose?: () => void };
 
 export type RangeTransport = (
   from: number,
@@ -22,7 +17,12 @@ export type RangeTransport = (
   signal: AbortSignal | undefined,
 ) => Promise<RangeReply>;
 
-export type OwnedTransport = RangeTransport & { dispose?: () => void };
+export interface RangeReply {
+  status: number;
+  header(name: string): string | null;
+  body: AsyncIterable<Uint8Array>;
+  cancel(): Promise<void>;
+}
 
 export const bytesRange = (from: number, to: number): string =>
   `bytes=${String(from)}-${String(to)}`;
@@ -96,44 +96,6 @@ const IDLE_CHUNK_LIMIT = 1000;
 
 const MAX_RESPONSES_PER_READ = 64;
 
-async function requestRange(
-  invariants: TransportInvariants,
-  dog: Watchdog,
-  from: number,
-  to: number,
-): Promise<RangeReply & { total: number }> {
-  const reply = await invariants.transport(from, to, dog.signal);
-  const dropped = async (why: string) => {
-    await reply.cancel();
-    return new Error(why);
-  };
-  if (reply.status !== 206) {
-    throw await dropped(
-      `${invariants.url} answered HTTP ${String(reply.status)} to a Range request; this reader needs a server that serves ranges`,
-    );
-  }
-  const encoding = reply.header("content-encoding");
-  const recoded = encoding !== null && encoding.trim().toLowerCase() !== "identity";
-  if (recoded) {
-    throw await dropped(
-      `${invariants.url} answered a range encoded as ${encoding}, and this reader asked for identity`,
-    );
-  }
-  const contentRange = /^bytes\s+(\d+)-\d+\/(\d+)\s*$/.exec(reply.header("content-range") ?? "");
-  if (contentRange === null) {
-    throw await dropped(`${invariants.url} did not state a total length in Content-Range`);
-  }
-  const start = Number(contentRange[1]);
-  const total = Number(contentRange[2]);
-  if (start !== from) {
-    throw await dropped(
-      `${invariants.url} answered a range from ${String(start)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
-    );
-  }
-  const body = watched(invariants.url, reply.body, dog);
-  return { ...reply, total, body };
-}
-
 async function readHead(
   invariants: TransportInvariants,
   signal: AbortSignal | undefined,
@@ -182,6 +144,44 @@ async function readOverRanges(
   } finally {
     dog.off();
   }
+}
+
+async function requestRange(
+  invariants: TransportInvariants,
+  dog: Watchdog,
+  from: number,
+  to: number,
+): Promise<RangeReply & { total: number }> {
+  const reply = await invariants.transport(from, to, dog.signal);
+  const dropped = async (why: string) => {
+    await reply.cancel();
+    return new Error(why);
+  };
+  if (reply.status !== 206) {
+    throw await dropped(
+      `${invariants.url} answered HTTP ${String(reply.status)} to a Range request; this reader needs a server that serves ranges`,
+    );
+  }
+  const encoding = reply.header("content-encoding");
+  const recoded = encoding !== null && encoding.trim().toLowerCase() !== "identity";
+  if (recoded) {
+    throw await dropped(
+      `${invariants.url} answered a range encoded as ${encoding}, and this reader asked for identity`,
+    );
+  }
+  const contentRange = /^bytes\s+(\d+)-\d+\/(\d+)\s*$/.exec(reply.header("content-range") ?? "");
+  if (contentRange === null) {
+    throw await dropped(`${invariants.url} did not state a total length in Content-Range`);
+  }
+  const start = Number(contentRange[1]);
+  const total = Number(contentRange[2]);
+  if (start !== from) {
+    throw await dropped(
+      `${invariants.url} answered a range from ${String(start)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
+    );
+  }
+  const body = watched(invariants.url, reply.body, dog);
+  return { ...reply, total, body };
 }
 
 async function readBodyInto(reply: RangeReply, into: Uint8Array, at: number): Promise<number> {

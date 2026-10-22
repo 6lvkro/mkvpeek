@@ -3,6 +3,13 @@ import * as E from "../ebml.js";
 import { available, type Source } from "../io/source.js";
 import { windowAt } from "../io/windows.js";
 
+export interface SegmentPass {
+  source: Source;
+  segment: Segment;
+  head: Window;
+  signal: AbortSignal | undefined;
+}
+
 export interface Segment {
   /**
    * The absolute offset of the Segment's first child.
@@ -11,13 +18,6 @@ export interface Segment {
    */
   body: number;
   end: number;
-}
-
-export interface SegmentPass {
-  source: Source;
-  segment: Segment;
-  head: Window;
-  signal: AbortSignal | undefined;
 }
 
 /** For a cluster, the window reaches its Timestamp. */
@@ -37,18 +37,6 @@ export const pastSegment = (el: Element, segment: Segment): boolean => el.next >
 export const headerNeed = (at: number, end: number): number =>
   Math.min(ELEMENT_HEADER_BYTES, end - at);
 
-export async function readPastHead(
-  pass: SegmentPass,
-  at: number,
-  length: number,
-  held: Window,
-): Promise<Window> {
-  const need = available(at, length, held.fileSize);
-  if (E.covers(held, at, need)) return held;
-  const sized = { source: pass.source, fileSize: held.fileSize };
-  return windowAt(sized, at, length, pass.signal);
-}
-
 export async function* hopTopLevel(
   pass: SegmentPass,
   /** A hop resumes past a sizeless cluster at the end the walk found. */
@@ -67,6 +55,18 @@ export async function* hopTopLevel(
     if (isOpen) return;
     pos = el.next;
   }
+}
+
+export async function readPastHead(
+  pass: SegmentPass,
+  at: number,
+  length: number,
+  held: Window,
+): Promise<Window> {
+  const need = available(at, length, held.fileSize);
+  if (E.covers(held, at, need)) return held;
+  const sized = { source: pass.source, fileSize: held.fileSize };
+  return windowAt(sized, at, length, pass.signal);
 }
 
 /** In a sizeless cluster the search goes as far as the window reaches. */

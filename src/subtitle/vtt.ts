@@ -13,14 +13,6 @@ interface VttCue {
   text: string;
 }
 
-function lineEndsTrimmed(text: string): string {
-  let end = text.length;
-  while (text[end - 1] === "\r" || text[end - 1] === "\n") {
-    end -= 1;
-  }
-  return text.slice(0, end);
-}
-
 function cueBlock(frame: Frame): string {
   const { id, settings, text } = vttCueOf(UTF8.decode(frame.data));
   const [start, end] = timesOf(frame, 1);
@@ -35,6 +27,14 @@ function vttCueOf(payload: string): VttCue {
   const id = match[1] as string;
   const settings = match[2] as string;
   return { id, settings, text: lineEndsTrimmed(payload.slice(match[0].length)) };
+}
+
+function lineEndsTrimmed(text: string): string {
+  let end = text.length;
+  while (text[end - 1] === "\r" || text[end - 1] === "\n") {
+    end -= 1;
+  }
+  return text.slice(0, end);
 }
 
 function vttTime(ms: number): string {
