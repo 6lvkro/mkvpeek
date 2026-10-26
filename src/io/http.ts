@@ -69,7 +69,7 @@ export function whyInadmissible(parsed: URL): string | null {
   return null;
 }
 
-function fetchTransport(url: string, options: UrlOptions): RangeTransport {
+export function fetchTransport(url: string, options: UrlOptions): RangeTransport {
   const { headers = {}, fetch: fetchImpl = globalThis.fetch } = options;
   admittedUrl(url);
   const withRange = (from: number, to: number) => {

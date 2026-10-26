@@ -158,9 +158,10 @@ async function requestRange(
   const encoding = reply.header("content-encoding");
   const recoded = encoding !== null && encoding.trim().toLowerCase() !== "identity";
   if (recoded) {
-    throw await dropped(
-      `${invariants.url} answered a range encoded as ${encoding}, and this reader asked for identity`,
+    const refused = await dropped(
+      `${invariants.url} answered a range in another encoding, and this reader asked for identity`,
     );
+    throw Object.assign(refused, { encoding });
   }
   const contentRange = /^bytes\s+(\d+)-\d+\/(\d+)\s*$/.exec(reply.header("content-range") ?? "");
   if (contentRange === null) {

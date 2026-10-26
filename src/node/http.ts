@@ -4,10 +4,10 @@ import type { AsyncDisposal } from "../disposal.js";
 import { abortReason, onAbort } from "../io/abort.js";
 import {
   admittedUrl,
+  fetchTransport,
   TRANSPORT_OWNED_HEADERS,
   type UrlOptions,
   urlSource as viaFetch,
-  whyInadmissible,
   withoutHeaders,
 } from "../io/http.js";
 import {
@@ -21,7 +21,7 @@ import type { Source } from "../io/source.js";
 import { MAX_CONCURRENCY } from "../io/source.js";
 
 /**
- * An HTTP source over `node:http`, or over `fetch` when one is passed.
+ * An HTTP source over `node:http`, whose redirects `fetch` follows, or wholly over `fetch` when one is passed.
  *
  * A server that answers a Range request with anything but 206 fails the read as `source-failed`.
  */
@@ -33,10 +33,6 @@ export async function urlSource(
   const transport = nodeTransport(url, options);
   return rangeSource(url, transport, options.stallMs);
 }
-
-const MAX_REDIRECTS = 20;
-
-const CROSS_ORIGIN_STRIPPED_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
 
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
@@ -85,28 +81,14 @@ function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
       request.end();
     });
 
+  // fetch follows the redirects, so the rules for each hop's credentials and Location are fetch's alone.
+  const followByFetch = fetchTransport(url, options);
   const transport: RangeTransport = async (from, to, signal) => {
-    let current = startUrl;
-    let carrying = headers;
-    for (let left = MAX_REDIRECTS; ; left -= 1) {
-      const reply = await sendRange(current, carrying, from, to, signal);
-      const location = reply.header("location");
-      if (!REDIRECT_STATUS.has(reply.status) || location === null) return reply;
-      await reply.cancel();
-      if (left === 0) {
-        throw new Error(`${url} redirected more than ${String(MAX_REDIRECTS)} times`);
-      }
-      const next = URL.parse(location, current.href);
-      if (next === null) {
-        throw new Error(`${url} redirected to ${location}, which is not a URL`);
-      }
-      const why = whyInadmissible(next);
-      if (why !== null) throw new Error(`${url} redirected to one that ${why}`);
-      if (next.origin !== current.origin) {
-        carrying = withoutHeaders(carrying, CROSS_ORIGIN_STRIPPED_HEADERS);
-      }
-      current = next;
-    }
+    const reply = await sendRange(startUrl, headers, from, to, signal);
+    const redirected = REDIRECT_STATUS.has(reply.status) && reply.header("location") !== null;
+    if (!redirected) return reply;
+    await reply.cancel();
+    return followByFetch(from, to, signal);
   };
   const dispose = () => {
     for (const key of ["http:", "https:"] as const) agent[key].destroy();
