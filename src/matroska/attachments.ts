@@ -83,9 +83,9 @@ async function readAttachedFile(
 }
 
 /**
- * Null past the cap or past the parent.
+ * Null past the bound.
  *
- * A child that does not read ends the walk, which hands back the last window.
+ * A child that does not read or that runs past its parent ends the walk, which answers its last window.
  */
 async function eachChildIn(
   located: Located,
@@ -101,8 +101,7 @@ async function eachChildIn(
     if (children > MAX_ATTACHMENT_CHILDREN) return null;
     window = await probed(located, pos, parent.next, window);
     const field = E.readElement(window, pos);
-    if (!E.decoded(field)) return window;
-    if (!E.fits(field, parent.next)) return null;
+    if (!E.fits(field, parent.next)) return window;
     const nextWindow = await visit(pos, field, window);
     if (nextWindow === null) return null;
     window = nextWindow;
