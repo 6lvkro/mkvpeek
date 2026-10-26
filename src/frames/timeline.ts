@@ -22,8 +22,7 @@ export async function timelineOf(
   firstClusterTicks: () => Promise<number | null>,
 ): Promise<Timeline> {
   const media = openedTracks.some(({ track }) => TIMELINE_TYPES.has(track.type));
-  const ticks = await firstClusterTicks();
-  const firstTicks = media ? ticks : 0;
+  const firstTicks = media ? await firstClusterTicks() : 0;
   if (firstTicks === null) throw new RefusalError("malformed");
   const nsPerTick = info.timestampScale;
   const delayNs = openedTracks.reduce((most, { track }) => Math.max(most, track.codecDelayNs), 0);
