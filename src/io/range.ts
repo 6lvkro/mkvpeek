@@ -2,7 +2,7 @@ import { type AsyncDisposal, disposable } from "../disposal.js";
 import { abortReason, givenSignal, linkedSignal } from "./abort.js";
 import { available, HEAD_BYTES, lend, type Source } from "./source.js";
 
-export type OwnedTransport = RangeTransport & { dispose?: () => void };
+export type OwnedTransport = RangeTransport & { dispose: () => void };
 
 export type RangeTransport = (
   from: number,
@@ -30,7 +30,6 @@ export function rangeSource(
       ? stallMs
       : null;
   const invariants: TransportInvariants = { url, transport, stallMs: effectiveStallMs };
-  const { dispose } = transport;
   let headRead: HeadRead | null = null;
   const headFor = async (signal: AbortSignal | undefined): Promise<HeadRead> => {
     headRead ??= await readHead(invariants, signal);
@@ -58,13 +57,8 @@ export function rangeSource(
     return readOverRanges(invariants, at, bounded, lent, signal);
   };
 
-  const release = () => Promise.resolve(dispose?.());
-  const source: Source = {
-    size,
-    read,
-    ...(dispose === undefined ? {} : { close: release }),
-    trip: "remote",
-  };
+  const release = () => Promise.resolve(transport.dispose());
+  const source: Source = { size, read, close: release, trip: "remote" };
   return disposable(source, release);
 }
 

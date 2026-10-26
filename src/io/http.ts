@@ -1,5 +1,5 @@
 import type { AsyncDisposal } from "../disposal.js";
-import { bytesRange, type RangeTransport, rangeSource } from "./range.js";
+import { bytesRange, type OwnedTransport, type RangeTransport, rangeSource } from "./range.js";
 import type { Source } from "./source.js";
 
 export interface UrlOptions {
@@ -72,7 +72,7 @@ export function whyInadmissible(parsed: URL): string | null {
 
 const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set(["host", "range", "accept-encoding"]);
 
-export function fetchTransport(url: string, options: UrlOptions): RangeTransport {
+export function fetchTransport(url: string, options: UrlOptions): OwnedTransport {
   const { fetch: fetchImpl = globalThis.fetch } = options;
   admittedUrl(url);
   const headers = callerHeaders(options);
@@ -82,7 +82,7 @@ export function fetchTransport(url: string, options: UrlOptions): RangeTransport
     out.set("Range", range);
     return out;
   };
-  return async (from, to, signal) => {
+  const transport: RangeTransport = async (from, to, signal) => {
     const init = {
       ...(signal === undefined ? {} : { signal }),
       headers: withRange(from, to),
@@ -99,6 +99,8 @@ export function fetchTransport(url: string, options: UrlOptions): RangeTransport
       cancel,
     };
   };
+  const dispose = () => {};
+  return Object.assign(transport, { dispose });
 }
 
 async function* chunksOf(
