@@ -5,7 +5,14 @@ import type { FrameFile } from "../frames/file.js";
 import { framesOf } from "../frames/read.js";
 import { timelineOf } from "../frames/timeline.js";
 import { settledFrameOptions } from "../frames/tuning.js";
-import { givenSignal, type Link, linkedSignal, stopIfAborted, untilAborted } from "../io/abort.js";
+import {
+  abortReason,
+  givenSignal,
+  type Link,
+  linkedSignal,
+  stopIfAborted,
+  untilAborted,
+} from "../io/abort.js";
 import type { Inflate, Source } from "../io/source.js";
 import { readAttachments } from "../matroska/attachments.js";
 import { readCues } from "../matroska/cues.js";
@@ -45,7 +52,15 @@ export async function openWith(
 ): Promise<Container> {
   const signal = givenSignal({ ...options }.signal);
   try {
-    const lease = await leaseOf(target, platform.open);
+    const leasing = leaseOf(target, platform.open);
+    const lease = await untilAborted(leasing, signal).catch((error: unknown) => {
+      // The lease a stopped open still makes is let go when it arrives.
+      void leasing.then(
+        (late) => late.release?.(),
+        () => {},
+      );
+      throw error;
+    });
     return await leased(lease, platform.inflate, signal);
   } catch (error) {
     throw refusalOf(error, signal) ?? error;
@@ -67,16 +82,20 @@ class LeasedContainer implements Container {
   readonly #file: FrameFile;
   readonly #attachments: PartRead<Attachment[]>;
   readonly #closing = new AbortController();
-  readonly #pending = new Set<Promise<unknown>>();
+  readonly #pending: Set<Promise<unknown>>;
   #closed: Promise<void> | null = null;
   declare readonly [Symbol.asyncDispose]: () => Promise<void>;
 
-  constructor(lease: TargetLease, opened: OpenedSegment, info: ContainerInfo) {
-    const source = withPendingReads(lease.source, this.#pending);
-    const held = { ...opened, source };
-    this.tracks = opened.openedTracks.map(handedOut);
+  constructor(
+    lease: TargetLease,
+    held: OpenedSegment,
+    info: ContainerInfo,
+    pending: Set<Promise<unknown>>,
+  ) {
+    this.tracks = held.openedTracks.map(handedOut);
     this.info = { ...info };
     this.#lease = lease;
+    this.#pending = pending;
     const closing = this.#closing.signal;
     this.#file = fileOf(held, info, closing);
     this.#attachments = sharedAndKept((signal) => readAttachments(held, signal), closing);
@@ -126,25 +145,47 @@ async function leased(
   inflate: Inflate,
   signal: AbortSignal | undefined,
 ): Promise<Container> {
+  const pending = new Set<Promise<unknown>>();
+  const source = withPendingCalls(lease.source, pending);
+  // An open's sizes and reads race a link off its signal, which a failed open aborts to cut the rest.
+  // A source that ignores the signal cannot hold the open.
+  const link = linkedSignal(signal);
+  const size: Source["size"] = (...args) => {
+    const sizing = source.size(...args);
+    return untilAborted(sizing, link.signal);
+  };
+  const read: Source["read"] = (...args) => {
+    const reading = source.read(...args);
+    return untilAborted(reading, link.signal);
+  };
+  const opening = { ...source, size, read };
   try {
-    const opened = await openSegment(lease.source, signal, inflate);
-    const info = await readInfo(opened, signal);
-    return new LeasedContainer(lease, opened, info);
+    const opened = await openSegment(opening, link.signal, inflate);
+    const info = await readInfo(opened, link.signal);
+    const held = { ...opened, source };
+    return new LeasedContainer(lease, held, info, pending);
   } catch (error) {
-    await lease.release?.();
+    link.abort(error);
+    const releasing = Promise.allSettled(pending).then(() => lease.release?.());
+    // The reads of an open its signal stopped may never end over a source that ignores the signal,
+    // so then the release is not awaited.
+    if (lease.release !== undefined && abortReason(signal) === null) await releasing;
     throw error;
+  } finally {
+    link.unlink();
   }
 }
 
-function withPendingReads(source: Source, pending: Set<Promise<unknown>>): Source {
-  const read: Source["read"] = (...args) => {
-    const reading = source.read(...args);
-    pending.add(reading);
-    const forget = () => pending.delete(reading);
-    reading.then(forget, forget);
-    return reading;
+function withPendingCalls(source: Source, pending: Set<Promise<unknown>>): Source {
+  const tracked = <T>(calling: Promise<T>) => {
+    pending.add(calling);
+    const forget = () => pending.delete(calling);
+    calling.then(forget, forget);
+    return calling;
   };
-  return { ...source, read };
+  const size: Source["size"] = (...args) => tracked(source.size(...args));
+  const read: Source["read"] = (...args) => tracked(source.read(...args));
+  return { ...source, size, read };
 }
 
 function handedOut({ track }: OpenedTrack): Track {
