@@ -56,7 +56,7 @@ export async function* framesOf(
       yield frame;
     }
   } catch (error) {
-    throw refusalOf(error, signal);
+    throw refusalOf(error, signal) ?? error;
   } finally {
     unlink();
   }
@@ -73,6 +73,7 @@ async function nextGroup(
     return await groups.next();
   } catch (error) {
     const refusal = refusalOf(error, signal);
+    if (refusal === null) throw error;
     if (via === "both" && WALK_TAKES_OVER.has(refusal.code)) return null;
     throw refusal;
   }

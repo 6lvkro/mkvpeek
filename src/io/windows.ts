@@ -164,9 +164,8 @@ export async function windowAt(
   into?: Uint8Array,
 ): Promise<Window> {
   stopIfAborted(signal);
-  const held = await source.read(at, length, into, signal);
-  if (held.length < available(at, length, fileSize)) throw new Error();
-  return { at, bytes: held, fileSize };
+  const bytes = await source.read(at, length, into, signal);
+  return { at, bytes, fileSize };
 }
 
 interface MarkedRange {

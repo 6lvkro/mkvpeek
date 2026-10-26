@@ -48,7 +48,7 @@ export async function openWith(
     const lease = await leaseOf(target, platform.open);
     return await leased(lease, platform.inflate, signal);
   } catch (error) {
-    throw refusalOf(error, signal);
+    throw refusalOf(error, signal) ?? error;
   }
 }
 
@@ -91,7 +91,7 @@ class LeasedContainer implements Container {
       const kept = await this.#attachments(signal);
       return kept.map((attachment) => ({ ...attachment }));
     } catch (error) {
-      throw refusalOf(error, signal);
+      throw refusalOf(error, signal) ?? error;
     } finally {
       unlink();
     }

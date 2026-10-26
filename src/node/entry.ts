@@ -49,12 +49,12 @@ async function viaPath(target: string): Promise<Source> {
   if (namesAuthority(target)) throw new RefusalError("invalid-target");
   try {
     return await fileSource(target);
-  } catch (error) {
+  } catch (cause) {
     const parsed = URL.parse(target);
     const intendedAsUrl =
       parsed !== null &&
       (parsed.protocol === "file:" || parsed.search !== "" || parsed.hash !== "");
     if (intendedAsUrl) throw new RefusalError("invalid-target");
-    throw error;
+    throw new RefusalError("source-failed", { cause });
   }
 }

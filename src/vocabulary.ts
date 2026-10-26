@@ -122,7 +122,7 @@ export interface Abortable {
 /**
  * A refusal a peek, an open, a read of frames or `attachments` throws.
  *
- * Under `source-failed`, its `cause` is what the source threw.
+ * Under `source-failed`, its `cause` is what the source threw, or why the source's answer was wrong.
  */
 export class RefusalError extends Error {
   readonly code: RefusalCode;
