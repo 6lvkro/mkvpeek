@@ -19,14 +19,15 @@ export interface UrlOptions {
   stallMs?: number | null;
 }
 
-export const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set(["host", "accept-encoding"]);
-
 export const whyCredentialed = (parsed: URL): string | null =>
   parsed.username !== "" || parsed.password !== ""
     ? "carries credentials in its URL, and this reader takes them as headers"
     : null;
 
 export const namesAuthority = (target: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
+
+export const callerHeaders = (options: UrlOptions): Record<string, string> =>
+  withoutHeaders(options.headers ?? {}, TRANSPORT_OWNED_HEADERS);
 
 export function withoutHeaders(
   headers: Readonly<Record<string, string>>,
@@ -69,11 +70,14 @@ export function whyInadmissible(parsed: URL): string | null {
   return null;
 }
 
+const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set(["host", "range", "accept-encoding"]);
+
 export function fetchTransport(url: string, options: UrlOptions): RangeTransport {
-  const { headers = {}, fetch: fetchImpl = globalThis.fetch } = options;
+  const { fetch: fetchImpl = globalThis.fetch } = options;
   admittedUrl(url);
+  const headers = callerHeaders(options);
   const withRange = (from: number, to: number) => {
-    const out = new Headers(withoutHeaders(headers, TRANSPORT_OWNED_HEADERS));
+    const out = new Headers(headers);
     const range = bytesRange(from, to);
     out.set("Range", range);
     return out;

@@ -4,11 +4,10 @@ import type { AsyncDisposal } from "../disposal.js";
 import { abortReason, onAbort } from "../io/abort.js";
 import {
   admittedUrl,
+  callerHeaders,
   fetchTransport,
-  TRANSPORT_OWNED_HEADERS,
   type UrlOptions,
   urlSource as viaFetch,
-  withoutHeaders,
 } from "../io/http.js";
 import {
   bytesRange,
@@ -42,7 +41,7 @@ function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
     "http:": new http.Agent({ keepAlive: true, maxSockets: MAX_CONCURRENCY }),
     "https:": new https.Agent({ keepAlive: true, maxSockets: MAX_CONCURRENCY }),
   };
-  const headers = withoutHeaders(options.headers ?? {}, TRANSPORT_OWNED_HEADERS);
+  const headers = callerHeaders(options);
   const sendRange = (
     parsed: URL,
     carrying: Readonly<Record<string, string>>,
