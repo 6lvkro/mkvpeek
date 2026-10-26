@@ -4,11 +4,29 @@ import { available, HEAD_BYTES, lend, type Source } from "./source.js";
 
 export type OwnedTransport = RangeTransport & { dispose: () => void };
 
-export type RangeTransport = (
+export interface RangeTransport {
+  start: Hop;
+  send: HopSender;
+}
+
+/** Follows redirects, starting at `hop`. */
+export type HopSender = (
+  hop: Hop,
   from: number,
   to: number,
   signal: AbortSignal | undefined,
-) => Promise<RangeReply>;
+) => Promise<Reached>;
+
+export interface Reached {
+  reply: RangeReply;
+  /** Where a redirect led, for later reads to go straight to, or null where there is none. */
+  hop: Hop | null;
+}
+
+export interface Hop {
+  url: URL;
+  headers: Readonly<Record<string, string>>;
+}
 
 export interface RangeReply {
   status: number;
@@ -29,7 +47,12 @@ export function rangeSource(
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
       ? stallMs
       : null;
-  const invariants: TransportInvariants = { url, transport, stallMs: effectiveStallMs };
+  const invariants: TransportInvariants = {
+    url,
+    transport,
+    stallMs: effectiveStallMs,
+    memory: { landing: null },
+  };
   let headRead: HeadRead | null = null;
   const headFor = async (signal: AbortSignal | undefined): Promise<HeadRead> => {
     headRead ??= await readHead(invariants, signal);
@@ -72,11 +95,17 @@ interface TransportInvariants {
   url: string;
   transport: RangeTransport;
   stallMs: number | null;
+  memory: { landing: Hop | null };
 }
 
 interface HeadRead {
   total: number;
   head: Uint8Array;
+}
+
+interface Exchanged {
+  landed: number;
+  total: number;
 }
 
 const IDLE_CHUNK_LIMIT = 1000;
@@ -87,15 +116,10 @@ async function readHead(
   invariants: TransportInvariants,
   signal: AbortSignal | undefined,
 ): Promise<HeadRead> {
-  const dog = watchdog(invariants.url, invariants.stallMs, signal);
-  try {
-    const first = await requestRange(invariants, dog, 0, HEAD_BYTES - 1);
-    const into = new Uint8Array(available(0, HEAD_BYTES, first.total));
-    const landed = await readBodyInto(first, into, 0);
-    return { total: first.total, head: into.subarray(0, landed) };
-  } finally {
-    dog.off();
-  }
+  const into = new Uint8Array(HEAD_BYTES);
+  const { landed, total } = await exchange(invariants, 0, HEAD_BYTES - 1, into, 0, signal);
+  const kept = Math.min(landed, total);
+  return { total, head: into.subarray(0, kept) };
 }
 
 async function readOverRanges(
@@ -108,67 +132,115 @@ async function readOverRanges(
   const out = into ?? new Uint8Array(bounded);
   let written = 0;
   let rounds = 0;
-  const dog = watchdog(invariants.url, invariants.stallMs, signal);
-  try {
-    while (written < bounded) {
-      rounds += 1;
-      if (rounds > MAX_RESPONSES_PER_READ) {
-        throw new Error(
-          `${invariants.url} dribbled ${String(written)} bytes over ${String(MAX_RESPONSES_PER_READ)} responses for one read; this reader does not pay a request per byte`,
-        );
-      }
-      const from = at + written;
-      const reply = await requestRange(invariants, dog, from, at + bounded - 1);
-      const landed = await readBodyInto(reply, out, written);
-      if (landed === 0) {
-        throw new Error(
-          `${invariants.url} answered a range from ${String(from)} with no bytes in it`,
-        );
-      }
-      written += landed;
+  while (written < bounded) {
+    rounds += 1;
+    if (rounds > MAX_RESPONSES_PER_READ) {
+      throw new Error(
+        `${invariants.url} dribbled ${String(written)} bytes over ${String(MAX_RESPONSES_PER_READ)} responses for one read; this reader does not pay a request per byte`,
+      );
     }
-    return out.subarray(0, written);
+    const from = at + written;
+    const { landed } = await exchange(invariants, from, at + bounded - 1, out, written, signal);
+    if (landed === 0) {
+      throw new Error(
+        `${invariants.url} answered a range from ${String(from)} with no bytes in it`,
+      );
+    }
+    written += landed;
+  }
+  return out.subarray(0, written);
+}
+
+/**
+ * Sends a read straight to where a redirect led, once a read there has arrived.
+ *
+ * Where that hop fails for any reason but the caller's signal,
+ * it is forgotten and the hops are followed once more from the start.
+ */
+async function exchange(
+  invariants: TransportInvariants,
+  from: number,
+  to: number,
+  into: Uint8Array,
+  at: number,
+  caller: AbortSignal | undefined,
+): Promise<Exchanged> {
+  const { transport, memory } = invariants;
+  const tried = memory.landing;
+  if (tried === null) return fetchRange(invariants, transport.start, from, to, into, at, caller);
+  try {
+    return await fetchRange(invariants, tried, from, to, into, at, caller);
+  } catch (error) {
+    if (abortReason(caller) !== null) throw error;
+    if (memory.landing === tried) {
+      memory.landing = null;
+    }
+    return fetchRange(invariants, transport.start, from, to, into, at, caller);
+  }
+}
+
+async function fetchRange(
+  invariants: TransportInvariants,
+  hop: Hop,
+  from: number,
+  to: number,
+  into: Uint8Array,
+  at: number,
+  caller: AbortSignal | undefined,
+): Promise<Exchanged> {
+  const dog = watchdog(invariants.url, invariants.stallMs, caller);
+  try {
+    const { reply, hop: reached } = await invariants.transport.send(hop, from, to, dog.signal);
+    const answer = await accepted(invariants.url, reply, from, dog);
+    if (answer.total === 0) {
+      await reply.cancel();
+      return { landed: 0, total: 0 };
+    }
+    const landed = await readBodyInto(answer, into, at);
+    if (hop === invariants.transport.start && reached !== null) {
+      invariants.memory.landing = reached;
+    }
+    return { landed, total: answer.total };
   } finally {
     dog.off();
   }
 }
 
-async function requestRange(
-  invariants: TransportInvariants,
-  dog: Watchdog,
+async function accepted(
+  url: string,
+  reply: RangeReply,
   from: number,
-  to: number,
+  dog: Watchdog,
 ): Promise<RangeReply & { total: number }> {
-  const reply = await invariants.transport(from, to, dog.signal);
   const dropped = async (why: string) => {
     await reply.cancel();
     return new Error(why);
   };
   if (reply.status !== 206) {
     throw await dropped(
-      `${invariants.url} answered HTTP ${String(reply.status)} to a Range request; this reader needs a server that serves ranges`,
+      `${url} answered HTTP ${String(reply.status)} to a Range request; this reader needs a server that serves ranges`,
     );
   }
   const encoding = reply.header("content-encoding");
   const recoded = encoding !== null && encoding.trim().toLowerCase() !== "identity";
   if (recoded) {
     const refused = await dropped(
-      `${invariants.url} answered a range in another encoding, and this reader asked for identity`,
+      `${url} answered a range in another encoding, and this reader asked for identity`,
     );
     throw Object.assign(refused, { encoding });
   }
   const contentRange = /^bytes\s+(\d+)-\d+\/(\d+)\s*$/.exec(reply.header("content-range") ?? "");
   if (contentRange === null) {
-    throw await dropped(`${invariants.url} did not state a total length in Content-Range`);
+    throw await dropped(`${url} did not state a total length in Content-Range`);
   }
   const start = Number(contentRange[1]);
   const total = Number(contentRange[2]);
   if (start !== from) {
     throw await dropped(
-      `${invariants.url} answered a range from ${String(start)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
+      `${url} answered a range from ${String(start)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
     );
   }
-  const body = watched(invariants.url, reply.body, dog);
+  const body = watched(url, reply.body, dog);
   return { ...reply, total, body };
 }
 

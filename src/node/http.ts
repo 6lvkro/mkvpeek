@@ -5,15 +5,15 @@ import { abortReason, onAbort } from "../io/abort.js";
 import {
   admittedUrl,
   callerHeaders,
-  fetchTransport,
+  fetchHops,
   type UrlOptions,
   urlSource as viaFetch,
 } from "../io/http.js";
 import {
   bytesRange,
+  type HopSender,
   type OwnedTransport,
   type RangeReply,
-  type RangeTransport,
   rangeSource,
 } from "../io/range.js";
 import type { Source } from "../io/source.js";
@@ -36,12 +36,11 @@ export async function urlSource(
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
 function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
-  const startUrl = admittedUrl(url);
+  const start = { url: admittedUrl(url), headers: callerHeaders(options) };
   const agent = {
     "http:": new http.Agent({ keepAlive: true, maxSockets: MAX_CONCURRENCY }),
     "https:": new https.Agent({ keepAlive: true, maxSockets: MAX_CONCURRENCY }),
   };
-  const headers = callerHeaders(options);
   const sendRange = (
     parsed: URL,
     carrying: Readonly<Record<string, string>>,
@@ -81,18 +80,18 @@ function nodeTransport(url: string, options: UrlOptions): OwnedTransport {
     });
 
   // fetch follows the redirects, so the rules for each hop's credentials and Location are fetch's alone.
-  const followByFetch = fetchTransport(url, options);
-  const transport: RangeTransport = async (from, to, signal) => {
-    const reply = await sendRange(startUrl, headers, from, to, signal);
+  const followByFetch = fetchHops(url, start, globalThis.fetch);
+  const send: HopSender = async (hop, from, to, signal) => {
+    const reply = await sendRange(hop.url, hop.headers, from, to, signal);
     const redirected = REDIRECT_STATUS.has(reply.status) && reply.header("location") !== null;
-    if (!redirected) return reply;
+    if (!redirected) return { reply, hop: null };
     await reply.cancel();
-    return followByFetch(from, to, signal);
+    return followByFetch(hop, from, to, signal);
   };
   const dispose = () => {
     for (const key of ["http:", "https:"] as const) agent[key].destroy();
   };
-  return Object.assign(transport, { dispose });
+  return { start, send, dispose };
 }
 
 function replyOver(response: http.IncomingMessage): RangeReply {
