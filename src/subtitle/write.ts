@@ -152,15 +152,18 @@ function piecesOf(
 }
 
 function settled(container: Container, options: SubtitleOptions): Draft[] {
-  const { formats, tracks } = { ...options };
-  const named = formatsNamed(formats ?? (tracks === undefined ? TEXT_FORMATS : FORMATS));
-  const drafts: Draft[] = [];
+  const { formats, tracks = null } = { ...options };
+  const named = formatsNamed(formats ?? (tracks === null ? TEXT_FORMATS : FORMATS));
+  const drafts = new Map<number, Draft>();
   for (const track of tracks ?? container.tracks) {
+    // A track the container does not list throws its TypeError before any format filters it.
+    if (!container.readable(track) || drafts.has(track.index)) continue;
     const assembly = assemblyOf(track);
-    if (assembly === null || !named.has(assembly.format) || !container.readable(track)) continue;
-    drafts.push(draftOf(track, assembly));
+    if (assembly === null || !named.has(assembly.format)) continue;
+    const draft = draftOf(track, assembly);
+    drafts.set(track.index, draft);
   }
-  return drafts;
+  return [...drafts.values()];
 }
 
 function formatsNamed(formats: Iterable<SubtitleFormat>): ReadonlySet<SubtitleFormat> {
