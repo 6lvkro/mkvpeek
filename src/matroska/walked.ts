@@ -1,20 +1,14 @@
 import type { Element, OpenElement, Window } from "../ebml.js";
 import * as E from "../ebml.js";
+import { linkedSignal, stopIfAborted, type Watch } from "../io/abort.js";
 import { HaltableQueue, joinOrAbort } from "../io/lanes.js";
-import {
-  available,
-  linkedSignal,
-  type SizedSource,
-  stopIfAborted,
-  type WalkFetch,
-  type Watch,
-} from "../io/source.js";
-import { type WindowPool, windowAt, windowPool } from "../io/windows.js";
+import type { SizedSource, WalkFetch } from "../io/source.js";
+import { heldOrRead, holds, type Loaned, type WindowPool, windowPool } from "../io/windows.js";
+import { RefusalError } from "../vocabulary.js";
 import {
   BLOCK_PROBE_BYTES,
-  BLOCK_REFUSAL,
-  type BlockClause,
   type BlockFrame,
+  type BlockRefusal,
   blockSteps,
   FRAME_IDS,
   type FrameClaim,
@@ -23,14 +17,15 @@ import {
 } from "./block.js";
 import { CLUSTER_PROBE_BYTES, hopTopLevel, readClusterTicks, type SegmentPass } from "./chain.js";
 import type { CuePosition } from "./cues.js";
+import { ID } from "./ids.js";
 
 /** The cluster a walk takes over at from another read, and the body offset its blocks must lie past. */
 export type WalkFrom = Pick<CuePosition, "clusterPos" | "relPos">;
 
 /**
- * Hands over the claimed tracks' frames cluster by cluster, in file order.
+ * Hands over the chosen tracks' frames cluster by cluster, in file order.
  *
- * A refusal is a `GrammarError` after the clusters before it, and ending the iteration ends the reads.
+ * A refusal is a `RefusalError` after the clusters before it are handed over, and ending the iteration ends the read.
  */
 export async function* walkFrames(
   opened: Omit<SegmentPass, "signal">,
@@ -57,7 +52,8 @@ export async function* walkFrames(
   let doneBytes = startBytes;
   let foundCount = 0;
   let handedCount = 0;
-  let refused = false;
+  // Refusals kept in cluster order, as the frames handed over stop at the first refusal, whose reason is the one that stays.
+  const refusals: (BlockRefusal | undefined)[] = [];
   let parked: Array<() => void> = [];
   const wake = () => {
     for (const resolve of parked) resolve();
@@ -78,12 +74,12 @@ export async function* walkFrames(
   const record = (
     index: number,
     span: ClusterSpan,
-    outcome: SweptFrames | BlockClause,
+    outcome: SweptFrames | BlockRefusal,
   ): outcome is SweptFrames => {
     stopIfAborted(signal);
     wake();
     if (typeof outcome === "string") {
-      refused = true;
+      refusals[index] = outcome;
       return false;
     }
     walked.set(index, outcome.frames);
@@ -106,7 +102,7 @@ export async function* walkFrames(
       while (await admitted(foundCount)) {
         let openCluster: HoppedCluster | null = null;
         for await (const { at, el, window } of hopTopLevel(reading, pos)) {
-          if (el.id === E.ID.segment.CLUSTER) {
+          if (el.id === ID.segment.CLUSTER) {
             if ("open" in el) {
               openCluster = {
                 index: foundCount++,
@@ -138,10 +134,9 @@ export async function* walkFrames(
       // Only grammar is swallowed;
       // swallowing a source failure too would make it a verdict on the container.
       queue.halt();
-      if (!E.isGrammarError(error)) throw error;
-      refused = true;
+      E.throwUnlessGrammar(error);
+      refusals[foundCount] = "malformed";
     } finally {
-      // close first, since release is a call that can throw.
       queue.close();
       seed?.release?.();
       wake();
@@ -177,7 +172,7 @@ export async function* walkFrames(
       await park();
     }
     if (failures.length > 0) throw failures[0];
-    if (refused) throw new E.GrammarError();
+    if (refusals.some((code) => code !== undefined)) throw new RefusalError("unreadable");
     watch.onProgress(fileSize, fileSize);
   } finally {
     ended.abort();
@@ -194,7 +189,7 @@ interface WalkInvariants {
   from: WalkFrom | undefined;
 }
 
-type WalkedCluster = (SweptFrames & { carried: Loaned }) | BlockClause;
+type WalkedCluster = (SweptFrames & { carried: Loaned }) | BlockRefusal;
 
 interface SweptFrames {
   frames: BlockFrame[];
@@ -220,14 +215,12 @@ interface Loans {
   ledger: Set<Loaned>;
 }
 
-type Loaned = Window & { readonly release?: () => void };
-
 const CLUSTER_CHILD_IDS = new Set<number>([
-  ...Object.values(E.ID.cluster),
-  ...Object.values(E.ID.global),
+  ...Object.values(ID.cluster),
+  ...Object.values(ID.global),
 ]);
 
-const SEGMENT_CHILD_IDS = new Set<number>(Object.values(E.ID.segment));
+const SEGMENT_CHILD_IDS = new Set<number>(Object.values(ID.segment));
 
 /** How many clusters per lane the walk may find ahead of the one it hands over next. */
 const CLUSTERS_AHEAD_PER_LANE = 4;
@@ -239,28 +232,14 @@ async function walkCluster(
   seed?: Loaned,
 ): Promise<WalkedCluster> {
   const ledger = new Set<Loaned>();
-  let outcome: WalkedCluster;
+  let outcome: WalkedCluster | undefined;
   try {
     outcome = await walkSpan(walk, span, { pool, ledger }, seed);
-  } catch (error) {
-    releaseAll(ledger, true);
-    throw error;
+    return outcome;
+  } finally {
+    if (outcome !== undefined && typeof outcome !== "string") ledger.delete(outcome.carried);
+    for (const window of ledger) window.release?.();
   }
-  if (typeof outcome !== "string") ledger.delete(outcome.carried);
-  releaseAll(ledger, false);
-  return outcome;
-}
-
-function releaseAll(ledger: Set<Loaned>, swallow: boolean): void {
-  let first: unknown = null;
-  for (const window of ledger) {
-    try {
-      window.release?.();
-    } catch (error) {
-      first ??= error;
-    }
-  }
-  if (first !== null && !swallow) throw first;
 }
 
 async function walkSpan(
@@ -275,31 +254,15 @@ async function walkSpan(
   };
   const firstWidth = widthFor(span.at, CLUSTER_PROBE_BYTES);
   const fetchWindow = async (at: number, width: number) => {
-    const bounded = available(at, width, sized.fileSize);
-    if (E.covers(head, at, bounded)) return head;
-    const lease = pool.borrow(width);
-    if (lease === null) return windowAt(sized, at, width, signal);
-    let window: Window;
-    try {
-      window = await windowAt(sized, at, width, signal, lease.bytes);
-    } catch (error) {
-      lease.release();
-      throw error;
-    }
-    if (window.bytes.buffer !== lease.bytes.buffer) {
-      lease.release();
-      return window;
-    }
-    const loaned = { ...window, release: lease.release };
-    ledger.add(loaned);
-    return loaned;
+    const window = await heldOrRead(sized.source, head, at, width, signal, pool);
+    if (window.release !== undefined) ledger.add(window);
+    return window;
   };
-  const firstBounded = available(span.at, firstWidth, sized.fileSize);
-  const adopted = seed !== undefined && E.covers(seed, span.at, firstBounded) ? seed : null;
+  const adopted = seed !== undefined && holds(seed, span.at, firstWidth) ? seed : null;
   // A Window so that nothing here releases it, as the ledger releases what was lent.
   let carried: Window = adopted ?? (await fetchWindow(span.at, firstWidth));
   const clusterTicks = readClusterTicks(carried, span.el);
-  if (clusterTicks === null) return BLOCK_REFUSAL.noClusterTime;
+  if (clusterTicks === null) return "malformed";
 
   const frames: BlockFrame[] = [];
   const handedThrough = from !== undefined && span.at === from.clusterPos ? from.relPos : -1;
@@ -316,12 +279,13 @@ async function walkSpan(
     const need = Math.min(BLOCK_PROBE_BYTES, span.end - pos);
     const window = E.covers(carried, pos, need) ? carried : await supply(pos, need);
     const el = E.readElement(window, pos);
-    if (typeof el === "string") return BLOCK_REFUSAL.notAnElement;
+    if (typeof el === "string") return "malformed";
     if (!CLUSTER_CHILD_IDS.has(el.id)) {
       if ("open" in span.el && SEGMENT_CHILD_IDS.has(el.id)) return { frames, end: pos, carried };
-      return BLOCK_REFUSAL.stranger;
+      // An element no cluster holds. A broken spec and an element this reader does not know are not told apart.
+      return "unreadable";
     }
-    if (!E.fits(el, span.end)) return BLOCK_REFUSAL.runsPastCluster;
+    if (!E.fits(el, span.end)) return "malformed";
     if (FRAME_IDS.has(el.id) && pos - span.el.body > handedThrough) {
       const steps = blockSteps(el, clusterTicks, window, claims);
       let step = steps.next();

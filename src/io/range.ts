@@ -1,13 +1,6 @@
 import { type AsyncDisposal, disposable } from "../disposal.js";
-import {
-  abortReason,
-  available,
-  givenSignal,
-  HEAD_BYTES,
-  lend,
-  linkedSignal,
-  type Source,
-} from "./source.js";
+import { abortReason, givenSignal, linkedSignal } from "./abort.js";
+import { available, HEAD_BYTES, lend, type Source } from "./source.js";
 
 export type OwnedTransport = RangeTransport & { dispose?: () => void };
 

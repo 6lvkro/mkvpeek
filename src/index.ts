@@ -25,14 +25,15 @@ export {
   subtitleStream,
   subtitleStreams,
 } from "./subtitle/write.js";
-export type { Track, TrackType } from "./tracks.js";
 export type {
   Abortable,
   Attachment,
   Bytes,
   ContainerInfo,
   RefusalCode,
+  Track,
   TrackFlags,
   TrackTag,
+  TrackType,
 } from "./vocabulary.js";
 export { RefusalError, worthFallback } from "./vocabulary.js";

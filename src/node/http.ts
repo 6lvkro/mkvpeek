@@ -1,6 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import type { AsyncDisposal } from "../disposal.js";
+import { abortReason, onAbort } from "../io/abort.js";
 import {
   admittedUrl,
   TRANSPORT_OWNED_HEADERS,
@@ -17,7 +18,7 @@ import {
   rangeSource,
 } from "../io/range.js";
 import type { Source } from "../io/source.js";
-import { abortReason, MAX_CONCURRENCY, onAbort } from "../io/source.js";
+import { MAX_CONCURRENCY } from "../io/source.js";
 
 /**
  * An HTTP source over `node:http`, or over `fetch` when one is passed.

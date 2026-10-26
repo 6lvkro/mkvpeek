@@ -9,7 +9,7 @@ import { openWith, type Platform, peekWith } from "../container/open.js";
 import type { Target } from "../container/target.js";
 import { isHttpUrl, namesAuthority } from "../io/http.js";
 import type { Source } from "../io/source.js";
-import type { Abortable, RefusalCode } from "../vocabulary.js";
+import { type Abortable, RefusalError } from "../vocabulary.js";
 import { fileSource } from "./file.js";
 import { urlSource } from "./http.js";
 import { inflateByZlib } from "./inflate.js";
@@ -44,9 +44,9 @@ export function openContainer(target: Target, options?: Abortable): Promise<Cont
 const PLATFORM: Platform = { open: viaPath, inflate: inflateByZlib };
 
 /** Opens a string target as a path, or as a URL where it names one. */
-async function viaPath(target: string): Promise<Source | RefusalCode> {
+async function viaPath(target: string): Promise<Source> {
   if (isHttpUrl(target)) return urlSource(target);
-  if (namesAuthority(target)) return "invalid-target";
+  if (namesAuthority(target)) throw new RefusalError("invalid-target");
   try {
     return await fileSource(target);
   } catch (error) {
@@ -54,7 +54,7 @@ async function viaPath(target: string): Promise<Source | RefusalCode> {
     const intendedAsUrl =
       parsed !== null &&
       (parsed.protocol === "file:" || parsed.search !== "" || parsed.hash !== "");
-    if (intendedAsUrl) return "invalid-target";
+    if (intendedAsUrl) throw new RefusalError("invalid-target");
     throw error;
   }
 }

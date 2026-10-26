@@ -1,7 +1,6 @@
 import type { Container } from "../container/contract.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
-import type { Track } from "../tracks.js";
-import type { Bytes } from "../vocabulary.js";
+import type { Bytes, Track } from "../vocabulary.js";
 import type { SubtitleFile, SubtitleFormat, SubtitlePiece } from "./contract.js";
 import { type Assembler, Spool } from "./spool.js";
 import { startSrt } from "./srt.js";
@@ -46,10 +45,13 @@ export function subtitleFormat(track: Track): SubtitleFormat | null {
  * if (sub !== null) use(track, sub.format, sub.bytes);
  */
 export function subtitleFile(track: Track, frames: readonly Frame[]): SubtitleFile | null {
-  const draft = draftOf(track);
-  if (draft === null) return null;
-  for (const frame of frames) draft.add(frame);
-  return filed(track, draft);
+  const assembly = assemblyOf(track);
+  if (assembly === null) return null;
+  const draft = draftOf(track, assembly);
+  const route = routed([draft]);
+  for (const frame of frames) route(frame);
+  draft.end();
+  return pieceOf(draft);
 }
 
 /**
@@ -64,20 +66,10 @@ export async function subtitleFiles(
   container: Container,
   options: SubtitleOptions = {},
 ): Promise<SubtitleFile[]> {
-  const written = writtenTracks(container, options);
-  const drafts = new Map<number, Draft>();
-  for (const track of written) {
-    const draft = draftOf(track) as Draft;
-    drafts.set(track.index, draft);
-  }
-  for await (const frame of container.frames(written, options)) {
-    const draft = drafts.get(frame.trackIndex) as Draft;
-    draft.add(frame);
-  }
-  return written.map((track) => {
-    const draft = drafts.get(track.index) as Draft;
-    return filed(track, draft);
-  });
+  const files: SubtitleFile[] = [];
+  // With no bound on a piece, the one piece each track ends with is its file.
+  for await (const file of piecesOf(container, options, Infinity)) files.push(file);
+  return files;
 }
 
 /**
@@ -97,8 +89,9 @@ export function subtitleStream(
   track: Track,
   frames: AsyncIterable<Frame>,
 ): SubtitleFile<AsyncIterable<Bytes>> | null {
-  const draft = draftOf(track);
-  if (draft === null) return null;
+  const assembly = assemblyOf(track);
+  if (assembly === null) return null;
+  const draft = draftOf(track, assembly);
   return { track, format: draft.format, bytes: streamed(draft, frames) };
 }
 
@@ -114,10 +107,7 @@ export function subtitleStreams(
   container: Container,
   options: SubtitleOptions = {},
 ): AsyncIterable<SubtitlePiece> {
-  const written = writtenTracks(container, options);
-  const drafts = written.map((track) => draftOf(track) as Draft);
-  const frames = container.frames(written, options);
-  return pieced(drafts, frames);
+  return piecesOf(container, options, PIECE_BYTES);
 }
 
 interface Assembly {
@@ -131,7 +121,7 @@ interface Draft {
   format: SubtitleFormat;
   add(frame: Frame): void;
   end(): void;
-  drain(): Uint8Array<ArrayBuffer>;
+  drain(): Bytes;
   waiting(): number;
 }
 
@@ -150,12 +140,27 @@ const TEXT_FORMATS: readonly SubtitleFormat[] = FORMATS.filter((format) => TEXTU
 /** What a stream gathers before it hands a piece on, as each piece costs its consumer a write. */
 const PIECE_BYTES = 64 * 1024;
 
-function writtenTracks(container: Container, options: SubtitleOptions): Track[] {
+function piecesOf(
+  container: Container,
+  options: SubtitleOptions,
+  pieceBytes: number,
+): AsyncGenerator<SubtitlePiece> {
+  const drafts = settled(container, options);
+  const tracks = drafts.map(({ track }) => track);
+  const frames = container.frames(tracks, options);
+  return pieced(drafts, frames, pieceBytes);
+}
+
+function settled(container: Container, options: SubtitleOptions): Draft[] {
   const { formats, tracks } = { ...options };
-  const byDefault = tracks === undefined ? TEXT_FORMATS : FORMATS;
-  const named: ReadonlySet<SubtitleFormat | null> = formatsNamed(formats ?? byDefault);
-  const asked = tracks ?? container.tracks;
-  return asked.filter((track) => named.has(subtitleFormat(track)) && container.readable(track));
+  const named = formatsNamed(formats ?? (tracks === undefined ? TEXT_FORMATS : FORMATS));
+  const drafts: Draft[] = [];
+  for (const track of tracks ?? container.tracks) {
+    const assembly = assemblyOf(track);
+    if (assembly === null || !named.has(assembly.format) || !container.readable(track)) continue;
+    drafts.push(draftOf(track, assembly));
+  }
+  return drafts;
 }
 
 function formatsNamed(formats: Iterable<SubtitleFormat>): ReadonlySet<SubtitleFormat> {
@@ -166,15 +171,10 @@ function formatsNamed(formats: Iterable<SubtitleFormat>): ReadonlySet<SubtitleFo
   return named;
 }
 
-function draftOf(track: Track): Draft | null {
-  const assembly = assemblyOf(track);
-  if (assembly === null) return null;
+function draftOf(track: Track, assembly: Assembly): Draft {
   const out = new Spool();
   const assembler = assembly.start(out);
-  const add = (frame: Frame) => {
-    const own = frame.trackIndex === track.index && frame.data.length > 0;
-    if (own) assembler.add(frame);
-  };
+  const add = (frame: Frame) => assembler.add(frame);
   const end = () => assembler.end?.();
   return {
     track,
@@ -211,35 +211,37 @@ function substationAssembly(track: Track): Assembly | null {
   return { format: script.format, start: (out) => startSubstation(script, out) };
 }
 
-function filed(track: Track, draft: Draft): SubtitleFile {
-  draft.end();
-  return { track, format: draft.format, bytes: draft.drain() };
-}
-
 async function* streamed(draft: Draft, frames: AsyncIterable<Frame>): AsyncGenerator<Bytes> {
-  for await (const piece of pieced([draft], frames)) yield piece.bytes;
+  for await (const piece of pieced([draft], frames, PIECE_BYTES)) yield piece.bytes;
 }
 
 async function* pieced(
   drafts: readonly Draft[],
   frames: AsyncIterable<Frame>,
+  pieceBytes: number,
 ): AsyncGenerator<SubtitlePiece> {
-  const byIndex = new Map(drafts.map((draft) => [draft.track.index, draft]));
+  const route = routed(drafts);
   const handed = new Set<Draft>();
   for await (const frame of frames) {
-    const draft = byIndex.get(frame.trackIndex);
-    if (draft === undefined) continue;
-    draft.add(frame);
-    if (draft.waiting() >= PIECE_BYTES) {
-      handed.add(draft);
-      yield pieceOf(draft);
-    }
+    const draft = route(frame);
+    if (draft === null || draft.waiting() < pieceBytes) continue;
+    handed.add(draft);
+    yield pieceOf(draft);
   }
   for (const draft of drafts) {
     draft.end();
-    // A track with nothing to write still comes out, as subtitleFiles writes it.
+    // A track that handed over nothing still comes out as one empty piece.
     if (draft.waiting() > 0 || !handed.has(draft)) yield pieceOf(draft);
   }
+}
+
+function routed(drafts: readonly Draft[]): (frame: Frame) => Draft | null {
+  const byIndex = new Map(drafts.map((draft) => [draft.track.index, draft]));
+  return (frame) => {
+    const draft = byIndex.get(frame.trackIndex) ?? null;
+    if (draft !== null && frame.data.length > 0) draft.add(frame);
+    return draft;
+  };
 }
 
 function pieceOf(draft: Draft): SubtitlePiece {

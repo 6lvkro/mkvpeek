@@ -1,13 +1,6 @@
 import type { AsyncDisposal } from "../disposal.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
-import type { Track } from "../tracks.js";
-import type { Abortable, Attachment, ContainerInfo } from "../vocabulary.js";
-
-/** What a container lists: every track it states, and its Info. */
-export interface Listing {
-  tracks: Track[];
-  info: ContainerInfo;
-}
+import type { Abortable, Attachment, ContainerInfo, Track } from "../vocabulary.js";
 
 /**
  * A container opened for its tracks' frames.
@@ -15,6 +8,7 @@ export interface Listing {
  * A structured clone of it carries the listing alone.
  */
 export interface Container extends AsyncDisposal {
+  // Declared here so that a hover shows these two as Container's.
   readonly tracks: Track[];
   readonly info: ContainerInfo;
   /** Read by the first call that asks, and kept. */
@@ -35,4 +29,10 @@ export interface Container extends AsyncDisposal {
   frames(tracks: readonly Track[], options?: FrameOptions): AsyncIterableIterator<Frame>;
   /** Ends the reads still running as `cancelled` and closes what the open opened. */
   close(): Promise<void>;
+}
+
+/** Every track a container lists, and its Info. */
+export interface Listing {
+  tracks: Track[];
+  info: ContainerInfo;
 }

@@ -1,33 +1,26 @@
-import type { Window } from "../ebml.js";
+import { isGrammarError, type Window } from "../ebml.js";
+import { stopIfAborted, type Watch } from "../io/abort.js";
 import { gathered } from "../io/lanes.js";
-import {
-  available,
-  type IndexFetch,
-  type Range,
-  type SizedSource,
-  stopIfAborted,
-  type Watch,
-} from "../io/source.js";
+import { available, type IndexFetch, type Range, type SizedSource } from "../io/source.js";
 import { coalesceAcross, fetchSpans, WindowIndex } from "../io/windows.js";
 import { plainFrame, undoneFrame } from "../matroska/block.js";
 import { CLUSTER_PROBE_BYTES } from "../matroska/chain.js";
 import type { CueIndex, CuePosition } from "../matroska/cues.js";
-import type { TrackEntry } from "../matroska/header.js";
+import type { OpenedTrack } from "../matroska/header.js";
 import {
-  type ClusterMemo,
-  type CuedBlock,
-  cuedShortfall,
+  blockShortfall,
+  type LocatedBlock,
+  locateByClusterHeads,
   locateByCue,
   planBlockRanges,
   planProbes,
-  pointShortfalls,
-  readCuedFrame,
-  readFrame,
+  readLocatedFrame,
 } from "../matroska/indexed.js";
 import { RefusalError } from "../vocabulary.js";
-import { claimFor, type FrameFile, type TrackClaim, vouchable } from "./claim.js";
+import { type ClaimsByNumber, claimFor, type TrackClaim, vouchable } from "./claim.js";
 import type { Frame } from "./contract.js";
-import { frameOn, type Timeline, timelineOf } from "./timeline.js";
+import type { FrameFile } from "./file.js";
+import { frameOn, type Timeline } from "./timeline.js";
 
 /** A group's frames, and the cue of the last, which every later frame lies past. */
 export interface IndexedGroup {
@@ -38,45 +31,48 @@ export interface IndexedGroup {
 /** Hands over a round's frames a group at a time, each group once it is read. */
 export async function* framesByIndex(
   file: FrameFile,
-  claims: readonly TrackClaim[],
+  claims: ClaimsByNumber,
   knobs: IndexFetch,
   watch: Watch,
   strict: boolean,
 ): AsyncGenerator<IndexedGroup> {
-  const parts = [
-    () => file.firstClusterTicks(watch.signal),
-    () => file.cues(watch.signal),
-  ] as const;
-  const [firstClusterTicks, cues] = await gathered(parts, knobs.concurrency, watch.signal);
-  const timeline = timelineOf(file, firstClusterTicks);
-  const plan = planFrames(cues, claims, strict);
-  const { head } = file;
-  const headBytes = head.bytes.length;
-  const stones = stonesOf(file, cues, claims);
-  const rounds: PlannedRound[] = [];
-  for (let start = 0; start < plan.length; start += FRAMES_PER_ROUND) {
-    const slice = plan.slice(start, start + FRAMES_PER_ROUND);
-    const positions = slice.map((p) => p.cue);
-    const blocks = planBlockRanges(positions);
-    const toBuy = unheld(blocks, head);
-    const spans = coalesceAcross(toBuy, stones, knobs);
-    const round = { slice, spans, bytes: bytesOf(spans) };
-    rounds.push(round);
+  try {
+    const parts = [() => file.timeline(watch.signal), () => file.cues(watch.signal)] as const;
+    const [timeline, cues] = await gathered(parts, knobs.concurrency, watch.signal);
+    const plan = planFrames(cues, claims, strict);
+    const { head } = file;
+    const headBytes = head.bytes.length;
+    const stones = stonesOf(file, cues, claims);
+    const rounds: PlannedRound[] = [];
+    for (let start = 0; start < plan.length; start += FRAMES_PER_ROUND) {
+      const slice = plan.slice(start, start + FRAMES_PER_ROUND);
+      const positions = slice.map((p) => p.cue);
+      const blocks = planBlockRanges(positions);
+      const toBuy = unheld(blocks, head);
+      const spans = coalesceAcross(toBuy, stones, knobs);
+      const round = { slice, spans, bytes: bytesOf(spans) };
+      rounds.push(round);
+    }
+    const totalBytes = headBytes + rounds.reduce((sum, r) => sum + r.bytes, 0);
+    watch.onProgress(headBytes, totalBytes);
+    const clusterStarts = clusterStartsOf(cues);
+    const invariants = {
+      sized: { source: file.source, fileSize: head.fileSize },
+      clusterStarts,
+      segmentEnd: file.segment.end,
+      knobs,
+      head,
+      strict,
+      timeline,
+      claims,
+    };
+    const progressBytes = { headBytes, totalBytes };
+    yield* byRound(invariants, rounds, progressBytes, watch);
+  } catch (error) {
+    // Grammar the index meets says this path could not read the file, not that the container is broken.
+    if (isGrammarError(error)) throw new RefusalError("unreadable");
+    throw error;
   }
-  const totalBytes = headBytes + rounds.reduce((sum, r) => sum + r.bytes, 0);
-  watch.onProgress(headBytes, totalBytes);
-  const clusterStarts = clusterStartsOf(cues);
-  const invariants = {
-    sized: { source: file.source, fileSize: head.fileSize },
-    clusterStarts,
-    segmentEnd: file.segment.end,
-    knobs,
-    head,
-    strict,
-    timeline,
-  };
-  const progressBytes = { headBytes, totalBytes };
-  yield* byRound(invariants, rounds, progressBytes, watch);
 }
 
 interface PlannedRound {
@@ -98,16 +94,17 @@ interface RoundInvariants {
   head: Window;
   strict: boolean;
   timeline: Timeline;
+  claims: ClaimsByNumber;
 }
 
 interface TimedRun {
   from: number;
-  blocks: CuedBlock[];
+  blocks: LocatedBlock[];
   clusterTicks: number;
 }
 
 interface ProbedRound extends FetchedGroup {
-  timed: Timed;
+  located: (LocatedBlock | null)[];
   /** Each cue's block bytes the probes left unbought. */
   tails: (Range | null)[];
 }
@@ -124,7 +121,7 @@ interface Group {
 }
 
 /** The blocks of a slice's cues read by their own time, each at its cue's place in the slice. */
-type Timed = (CuedBlock | undefined)[];
+type Timed = (LocatedBlock | undefined)[];
 
 const FRAMES_PER_ROUND = 4096;
 
@@ -142,14 +139,10 @@ const unheld = (ranges: readonly Range[], head: Window): Range[] =>
 const bytesOf = (spans: readonly Range[]): number =>
   spans.reduce((sum, span) => sum + span.length, 0);
 
-function planFrames(
-  byTrack: CueIndex,
-  claims: readonly TrackClaim[],
-  strict: boolean,
-): PlannedCue[] {
+function planFrames(byTrack: CueIndex, claims: ClaimsByNumber, strict: boolean): PlannedCue[] {
   const planned: PlannedCue[] = [];
-  for (const claim of claims) {
-    const cues = byTrack.get(claim.entry.number) ?? [];
+  for (const claim of claims.values()) {
+    const cues = byTrack.get(claim.track.number) ?? [];
     if (!vouchable(claim, cues.length, strict)) {
       throw new RefusalError("unreadable");
     }
@@ -160,12 +153,12 @@ function planFrames(
 }
 
 /** The blocks the other readable tracks' cues name, which may close the holes between this read's. */
-function stonesOf(file: FrameFile, byTrack: CueIndex, claims: readonly TrackClaim[]): Range[] {
-  const chosen = new Set(claims.map(({ entry }) => entry.number));
-  const givesStones = (entry: TrackEntry) =>
-    !chosen.has(entry.number) && claimFor(entry, file) !== null;
-  const readable = file.trackEntries.filter(givesStones);
-  const numbers = new Set(readable.map((entry) => entry.number));
+function stonesOf(file: FrameFile, byTrack: CueIndex, claims: ClaimsByNumber): Range[] {
+  const chosen = new Set(claims.keys());
+  const givesStones = (openedTrack: OpenedTrack) =>
+    !chosen.has(openedTrack.track.number) && claimFor(openedTrack) !== null;
+  const readable = file.openedTracks.filter(givesStones);
+  const numbers = new Set(readable.map(({ track }) => track.number));
   const cues = [...byTrack]
     .filter(([number]) => numbers.has(number))
     .flatMap(([, positions]) => positions);
@@ -195,10 +188,11 @@ async function* byRound(
     doneBytes += probed.unplannedBytes;
     priceBytes += probed.unplannedBytes;
     for (const group of groupsOf(probed.tails, GROUP_BYTES)) {
-      const { windows, unplannedBytes } = await fetchGroup(invariants, probed, group, signal);
+      const lacking = probed.tails.slice(group.from, group.to).filter((tail) => tail !== null);
+      const { windows, unplannedBytes } = await buy(invariants, lacking, probed.windows, signal);
       const slice = round.slice.slice(group.from, group.to);
-      const timed = probed.timed.slice(group.from, group.to);
-      const groupFrames = await readGroup(windows, slice, timed, invariants.timeline);
+      const located = probed.located.slice(group.from, group.to);
+      const groupFrames = await readGroup(windows, slice, located, invariants);
       doneBytes += unplannedBytes;
       priceBytes += unplannedBytes;
       // The round's planned spans count as done with its last group, so the price is not met while a group remains.
@@ -224,7 +218,7 @@ async function probeRound(
   const timed = strict ? slice.map(() => undefined) : timedByCue(blockWindows, slice, invariants);
   // A timed cue's tail is known from the planned spans alone.
   const tails = timed.map((cued) =>
-    cued === undefined ? null : cuedShortfall(blockWindows, cued),
+    cued === undefined ? null : blockShortfall(blockWindows, cued),
   );
   const untimedAt: number[] = [];
   for (let at = 0; at < slice.length; at += 1) {
@@ -232,23 +226,24 @@ async function probeRound(
   }
   const untimed = untimedAt.map((at) => (slice[at] as PlannedCue).cue);
   const clusters = untimed.map((cue) => cue.clusterPos);
-  const heads = unheldHeads(blockWindows, clusters, sized.fileSize);
+  const heads = unheldHeads(blockWindows, clusters);
   const probes = planProbes(heads);
   const leading = leadingTails(timed, tails, GROUP_BYTES);
   const riding = leading.map((at) => tails[at] as Range);
-  const toProbe = unheld([...probes, ...riding], head);
-  const extra = coalesceAcross(toProbe, [], knobs);
-  const headWindows = await fetchSpans(sized, extra, knobs.concurrency, signal);
-  bought.push(...headWindows);
+  const toProbe = [...probes, ...riding];
+  const { windows, unplannedBytes } = await buy(invariants, toProbe, blockWindows, signal);
   for (const at of leading) {
     tails[at] = null;
   }
-  const windows = new WindowIndex(bought, head);
-  const untimedTails = pointShortfalls(windows, untimed);
+  const located = timed.map((cued) => cued ?? null);
+  const untimedLocated = locateByClusterHeads(windows, untimed);
   for (let i = 0; i < untimedAt.length; i += 1) {
-    tails[untimedAt[i] as number] = untimedTails[i] ?? null;
+    const at = untimedAt[i] as number;
+    const block = untimedLocated[i] ?? null;
+    located[at] = block;
+    tails[at] = block === null ? null : blockShortfall(windows, block);
   }
-  return { windows, unplannedBytes: bytesOf(extra), timed, tails };
+  return { windows, unplannedBytes, located, tails };
 }
 
 /** The cues whose blocks are read by their own time, a cluster's cues all or none. */
@@ -306,14 +301,14 @@ function timedRunOf(
   to: number,
   limit: number,
 ): TimedRun | null {
-  const blocks: CuedBlock[] = [];
+  const blocks: LocatedBlock[] = [];
   for (let i = from; i < to; i += 1) {
     const { cue, claim } = slice[i] as PlannedCue;
-    const block = locateByCue(windows, cue, claim.entry.number);
+    const block = locateByCue(windows, cue, claim.track.number);
     if (block === null || block.outer.next > limit) return null;
     blocks.push(block);
   }
-  const first = blocks[0] as CuedBlock;
+  const first = blocks[0] as LocatedBlock;
   const oneCluster = blocks.every(
     (block) => block.clusterBody === first.clusterBody && block.clusterTicks === first.clusterTicks,
   );
@@ -322,11 +317,10 @@ function timedRunOf(
   return { from, blocks, clusterTicks };
 }
 
-function unheldHeads(windows: WindowIndex, clusters: Iterable<number>, fileSize: number): number[] {
+function unheldHeads(windows: WindowIndex, clusters: Iterable<number>): number[] {
   const unheldAt: number[] = [];
   for (const at of new Set(clusters)) {
-    const need = available(at, CLUSTER_PROBE_BYTES, fileSize);
-    if (windows.find(at, need) === null) unheldAt.push(at);
+    if (windows.find(at, CLUSTER_PROBE_BYTES) === null) unheldAt.push(at);
   }
   return unheldAt;
 }
@@ -361,36 +355,30 @@ function* groupsOf(tails: readonly (Range | null)[], budget: number): Generator<
   yield { from, to: tails.length };
 }
 
-async function fetchGroup(
+async function buy(
   { sized, knobs, head }: RoundInvariants,
-  { windows, tails }: ProbedRound,
-  { from, to }: Group,
+  ranges: readonly Range[],
+  under: WindowIndex,
   signal: AbortSignal,
 ): Promise<FetchedGroup> {
-  const lacking = tails.slice(from, to).filter((tail) => tail !== null);
-  const toBuy = unheld(lacking, head);
+  const toBuy = unheld(ranges, head);
   const extra = coalesceAcross(toBuy, [], knobs);
   const fetched = await fetchSpans(sized, extra, knobs.concurrency, signal);
-  return { windows: new WindowIndex(fetched, undefined, windows), unplannedBytes: bytesOf(extra) };
+  return { windows: new WindowIndex(fetched, undefined, under), unplannedBytes: bytesOf(extra) };
 }
 
 async function readGroup(
   windows: WindowIndex,
   slice: readonly PlannedCue[],
-  timed: Timed,
-  timeline: Timeline,
+  located: readonly (LocatedBlock | null)[],
+  { claims, timeline }: RoundInvariants,
 ): Promise<Frame[]> {
   const frames: Frame[] = [];
-  const memo: ClusterMemo = { last: null };
   for (let i = 0; i < slice.length; i += 1) {
-    const { claim, cue } = slice[i] as PlannedCue;
-    const { number, index } = claim.entry;
-    const cued = timed[i];
-    const stored =
-      cued === undefined
-        ? readFrame(windows, cue, number, claim, memo)
-        : readCuedFrame(windows, cued, number, claim);
-    if (typeof stored === "string") throw new RefusalError("unreadable");
+    const { number, index } = (slice[i] as PlannedCue).claim.track;
+    const block = located[i] ?? null;
+    const stored = block === null ? null : readLocatedFrame(windows, block, number, claims);
+    if (stored === null) throw new RefusalError("unreadable");
     const frame =
       stored.undo === null ? plainFrame(stored) : await undoneFrame(stored, stored.undo);
     if (typeof frame === "string") throw new RefusalError("unreadable");

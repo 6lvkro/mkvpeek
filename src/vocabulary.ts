@@ -1,3 +1,42 @@
+export interface Track<T extends TrackType = TrackType> {
+  type: T;
+  /**
+   * The position in the track list.
+   *
+   * The same count as ffmpeg's `0:N`.
+   */
+  index: number;
+  /** The container's TrackNumber. */
+  number: number;
+  /** The TrackUID in hexadecimal, null where it is unstated. */
+  uid: string | null;
+  /** The Matroska CodecID, such as `S_TEXT/ASS`. */
+  codecId: string;
+  /** null when the track states none, or states an encoding over it this reader cannot undo. */
+  codecPrivate: Uint8Array | null;
+  /** Exactly what the container states, unnormalised; only no statement is null. */
+  language: string | null;
+  /** The BCP 47 language, passed through as `language` is. */
+  languageIetf: string | null;
+  name: string | null;
+  flags: TrackFlags;
+  /** Frame times already account for the largest CodecDelay any track states. */
+  codecDelayNs: number;
+  /** The SimpleTags of every Tag that targets this track's TrackUID. */
+  tags: TrackTag[];
+}
+
+export type TrackType =
+  | "video"
+  | "audio"
+  | "complex"
+  | "logo"
+  | "subtitle"
+  | "buttons"
+  | "control"
+  | "metadata"
+  | "unknown";
+
 /**
  * `enabled`, `default` and `forced` are effective values with the spec defaults (1, 1, 0) applied;
  * the other five have no default.

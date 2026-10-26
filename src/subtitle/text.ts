@@ -15,7 +15,8 @@ export const MS_PER_SECOND = 1000;
 
 export const padded = (n: number, width = 2): string => String(n).padStart(width, "0");
 
-export function timesOf(frame: Frame, msPerUnit: number): readonly [number, number] {
+export function timesOf(frame: Frame, perSecond: number): readonly [number, number] {
+  const msPerUnit = MS_PER_SECOND / perSecond;
   const start = Math.round(frame.startMs / msPerUnit);
   return [start, start + Math.round((frame.durationMs ?? 0) / msPerUnit)];
 }

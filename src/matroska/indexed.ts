@@ -3,33 +3,17 @@ import * as E from "../ebml.js";
 import type { Range } from "../io/source.js";
 import type { WindowIndex } from "../io/windows.js";
 import {
-  BLOCK_REFUSAL,
-  type BlockClause,
   blockSteps,
   FRAME_IDS,
   type FrameClaim,
   heldBlockHead,
   type StoredFrame,
 } from "./block.js";
-import {
-  CLUSTER_PROBE_BYTES,
-  ELEMENT_HEADER_BYTES,
-  headerNeed,
-  readClusterTicks,
-} from "./chain.js";
+import { CLUSTER_PROBE_BYTES, readClusterTicks, readsAs } from "./chain.js";
 import type { CuePosition } from "./cues.js";
+import { ID } from "./ids.js";
 
-/** Points naming the same cluster in a row share its element, its time and the last window. */
-export interface ClusterMemo {
-  last: LastCluster | null;
-}
-
-/**
- * A block found from its cue alone, with its cluster's head unread.
- *
- * The cluster's body and clock are what the block's position and the cue's time imply.
- */
-export interface CuedBlock {
+export interface LocatedBlock {
   blockAt: number;
   outer: Element;
   clusterBody: number;
@@ -37,43 +21,28 @@ export interface CuedBlock {
   window: Window;
 }
 
-interface LastCluster {
-  clusterPos: number;
-  cluster: Element;
-  clusterTicks: number | null;
-  window: Window;
-}
-
-export function readFrame(
+export function readLocatedFrame(
   windows: WindowIndex,
-  point: CuePosition,
+  { outer, clusterTicks, window }: LocatedBlock,
   trackNumber: number,
-  claim: FrameClaim,
-  memo: ClusterMemo,
-): StoredFrame | BlockClause {
-  const pointed = locateBlock(windows, point, memo);
-  if (typeof pointed === "string") return pointed;
-  const { clusterTicks, window, outer } = pointed;
-
-  if (clusterTicks === null) return BLOCK_REFUSAL.noClusterTime;
-
-  return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, claim);
-}
-
-export function readCuedFrame(
-  windows: WindowIndex,
-  cued: CuedBlock,
-  trackNumber: number,
-  claim: FrameClaim,
-): StoredFrame | BlockClause {
-  const { outer, clusterTicks, window } = cued;
-  return frameOfBlock(windows, outer, clusterTicks, window, trackNumber, claim);
+  claims: ReadonlyMap<number, FrameClaim>,
+): StoredFrame | null {
+  const steps = blockSteps(outer, clusterTicks, window, claims);
+  let step = steps.next();
+  while (step.done !== true) {
+    const found = windows.find(step.value.at, step.value.length);
+    if (found === null) return null;
+    step = steps.next(found);
+  }
+  const stored = step.value;
+  // A cue must point to a block of its own track, so a block of another track leads nowhere.
+  return typeof stored === "string" || stored?.trackNumber !== trackNumber ? null : stored;
 }
 
 export function planBlockRanges(points: readonly CuePosition[]): Range[] {
   const ranges: Range[] = [];
   for (const { clusterPos, relPos } of points) {
-    ranges.push({ at: clusterPos + relPos, length: MAX_CLUSTER_HEADER_BYTES + CUE_AHEAD_BYTES });
+    ranges.push({ at: clusterPos + relPos, length: CUE_RANGE_BYTES });
   }
   return ranges;
 }
@@ -86,34 +55,54 @@ export function planProbes(clusters: Iterable<number>): Range[] {
   return ranges;
 }
 
-/** Each point's block bytes the windows do not hold, null where they hold them all or the block does not locate. */
-export function pointShortfalls(
+export function blockShortfall(
+  windows: WindowIndex,
+  { blockAt, outer }: LocatedBlock,
+): Range | null {
+  return windows.find(blockAt, outer.next - blockAt) === null
+    ? { at: blockAt, length: outer.next - blockAt }
+    : null;
+}
+
+export function locateByClusterHeads(
   windows: WindowIndex,
   points: readonly CuePosition[],
-): (Range | null)[] {
-  const memo: ClusterMemo = { last: null };
-  return points.map((point) => {
-    const pointed = locateBlock(windows, point, memo);
-    if (typeof pointed === "string") return null;
-    return unheldBlock(windows, pointed.blockAt, pointed.outer);
+): (LocatedBlock | null)[] {
+  let last: LastCluster | null = null;
+  return points.map(({ clusterPos, relPos }) => {
+    if (last === null || last.clusterPos !== clusterPos) {
+      last = clusterAt(windows, clusterPos);
+      if (last === null) return null;
+    }
+    const { cluster, clusterTicks } = last;
+    if (clusterTicks === null) return null;
+    const blockAt = cluster.body + relPos;
+    if (blockAt >= cluster.next) return null;
+    const need = E.headerNeed(blockAt, cluster.next);
+    const window = E.covers(last.window, blockAt, need) ? last.window : windows.find(blockAt, need);
+    if (window === null) return null;
+    last.window = window;
+    const outer = E.readElement(window, blockAt);
+    if (!E.fits(outer, cluster.next) || !FRAME_IDS.has(outer.id)) return null;
+    return { blockAt, outer, clusterBody: cluster.body, clusterTicks, window };
   });
 }
 
-export function cuedShortfall(windows: WindowIndex, { blockAt, outer }: CuedBlock): Range | null {
-  return unheldBlock(windows, blockAt, outer);
-}
-
-/** The one block of the track that parses past the cue's position at some cluster-header width. */
+/**
+ * The track's block found from the cue alone, where exactly one cluster header width parses one past the cue.
+ *
+ * The cluster's body and clock are what the block's position and the cue's time imply.
+ */
 export function locateByCue(
   windows: WindowIndex,
   point: CuePosition,
   trackNumber: number,
-): CuedBlock | null {
+): LocatedBlock | null {
   const { clusterPos, relPos, ticks } = point;
   if (ticks === null) return null;
-  const window = windows.find(clusterPos + relPos, MAX_CLUSTER_HEADER_BYTES);
+  const window = windows.find(clusterPos + relPos, CUE_RANGE_BYTES);
   if (window === null) return null;
-  let cued: CuedBlock | null = null;
+  let cued: LocatedBlock | null = null;
   for (let width = MIN_CLUSTER_HEADER_BYTES; width <= MAX_CLUSTER_HEADER_BYTES; width++) {
     const clusterBody = clusterPos + width;
     const blockAt = clusterBody + relPos;
@@ -129,11 +118,11 @@ export function locateByCue(
   return cued;
 }
 
-interface PointedBlock {
+interface LastCluster {
+  clusterPos: number;
+  cluster: Element;
   clusterTicks: number | null;
   window: Window;
-  blockAt: number;
-  outer: Element;
 }
 
 const CLUSTER_ID_BYTES = 4;
@@ -144,58 +133,13 @@ const MAX_CLUSTER_HEADER_BYTES = CLUSTER_ID_BYTES + E.MAX_VINT_BYTES;
 
 const CUE_AHEAD_BYTES = 256;
 
-const unheldBlock = (windows: WindowIndex, blockAt: number, outer: Element): Range | null =>
-  windows.find(blockAt, outer.next - blockAt) === null
-    ? { at: blockAt, length: outer.next - blockAt }
-    : null;
+const CUE_RANGE_BYTES = MAX_CLUSTER_HEADER_BYTES + CUE_AHEAD_BYTES;
 
-function frameOfBlock(
-  windows: WindowIndex,
-  outer: Element,
-  clusterTicks: number,
-  held: Window,
-  trackNumber: number,
-  claim: FrameClaim,
-): StoredFrame | BlockClause {
-  const claims = new Map([[trackNumber, claim]]);
-  const steps = blockSteps(outer, clusterTicks, held, claims);
-  let step = steps.next();
-  while (step.done !== true) {
-    const window = windows.find(step.value.at, step.value.length);
-    if (window === null) return BLOCK_REFUSAL.notFetched;
-    step = steps.next(window);
-  }
-  return step.value ?? BLOCK_REFUSAL.notThisTrack;
-}
-
-function locateBlock(
-  windows: WindowIndex,
-  { clusterPos, relPos }: CuePosition,
-  memo: ClusterMemo,
-): PointedBlock | BlockClause {
-  let last = memo.last;
-  if (last === null || last.clusterPos !== clusterPos) {
-    const clusterHead = windows.find(clusterPos, ELEMENT_HEADER_BYTES);
-    if (clusterHead === null) return BLOCK_REFUSAL.notFetched;
-    const cluster = E.readElement(clusterHead, clusterPos);
-    if (typeof cluster === "string" || cluster.id !== E.ID.segment.CLUSTER) {
-      return BLOCK_REFUSAL.notACluster;
-    }
-    if ("open" in cluster) return BLOCK_REFUSAL.openCluster;
-    const clusterTicks = readClusterTicks(clusterHead, cluster);
-    last = { clusterPos, cluster, clusterTicks, window: clusterHead };
-    memo.last = last;
-  }
-  const { cluster, clusterTicks } = last;
-  const blockAt = cluster.body + relPos;
-  const need = headerNeed(blockAt, cluster.next);
-  const held = last.window;
-  const window = E.covers(held, blockAt, need) ? held : windows.find(blockAt, need);
-  if (window === null) return BLOCK_REFUSAL.notFetched;
-  last.window = window;
-
-  const outer = E.readElement(window, blockAt);
-  if (!E.fits(outer, cluster.next)) return BLOCK_REFUSAL.runsPastCluster;
-  if (!FRAME_IDS.has(outer.id)) return BLOCK_REFUSAL.notABlock;
-  return { clusterTicks, window, blockAt, outer };
+function clusterAt(windows: WindowIndex, clusterPos: number): LastCluster | null {
+  const clusterHead = windows.find(clusterPos, CLUSTER_PROBE_BYTES);
+  if (clusterHead === null) return null;
+  const cluster = E.readElement(clusterHead, clusterPos);
+  if (!readsAs(cluster, ID.segment.CLUSTER)) return null;
+  const clusterTicks = readClusterTicks(clusterHead, cluster);
+  return { clusterPos, cluster, clusterTicks, window: clusterHead };
 }

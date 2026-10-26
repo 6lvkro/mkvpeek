@@ -1,7 +1,8 @@
 import type { Element, OpenElement, Window } from "../ebml.js";
 import * as E from "../ebml.js";
-import { available, type Source } from "../io/source.js";
-import { windowAt } from "../io/windows.js";
+import type { Source } from "../io/source.js";
+import { heldOrRead } from "../io/windows.js";
+import { ID } from "./ids.js";
 
 export interface Located extends SegmentPass {
   offsets: Map<number, number>;
@@ -36,15 +37,10 @@ interface Fetched {
   element: Element;
 }
 
-export const ELEMENT_HEADER_BYTES = 2 * E.MAX_VINT_BYTES;
-
 /** Enough to read a cluster's header and its Timestamp. */
 export const CLUSTER_PROBE_BYTES = 64;
 
 export const pastSegment = (el: Element, segment: Segment): boolean => el.next > segment.end;
-
-export const headerNeed = (at: number, end: number): number =>
-  Math.min(ELEMENT_HEADER_BYTES, end - at);
 
 export const readsAs = (el: ReturnType<typeof E.readElement>, id: number): el is Element =>
   E.decoded(el) && el.id === id;
@@ -68,11 +64,11 @@ export async function* hopTopLevel(
 ): AsyncGenerator<TopLevelHop> {
   let pos = from;
   while (pos < pass.segment.end) {
-    const window = await readPastHead(pass, pos, CLUSTER_PROBE_BYTES, pass.head);
+    const window = await heldOrRead(pass.source, pass.head, pos, CLUSTER_PROBE_BYTES, pass.signal);
     const el = E.readElement(window, pos);
     if (typeof el === "string") throw new E.GrammarError();
     const isOpen = "open" in el;
-    if (isOpen ? el.id !== E.ID.segment.CLUSTER : pastSegment(el, pass.segment)) {
+    if (isOpen ? el.id !== ID.segment.CLUSTER : pastSegment(el, pass.segment)) {
       throw new E.GrammarError();
     }
     yield { at: pos, el, window };
@@ -86,9 +82,10 @@ export function readClusterTicks(window: Window, cluster: Element | OpenElement)
   const end = "open" in cluster ? E.reachOf(window) : cluster.next;
   try {
     for (const field of E.children(window, cluster.body, end - cluster.body)) {
-      if (field.id === E.ID.cluster.TIMESTAMP) return E.readUint(window, field);
+      if (field.id === ID.cluster.TIMESTAMP) return E.readUint(window, field);
     }
-  } catch {
+  } catch (error) {
+    E.throwUnlessGrammar(error);
     return null;
   }
   return null;
@@ -98,7 +95,7 @@ export async function optional<T>(fallback: T, read: () => Promise<T>): Promise<
   try {
     return await read();
   } catch (error) {
-    if (!E.isGrammarError(error)) throw error;
+    E.throwUnlessGrammar(error);
     return fallback;
   }
 }
@@ -114,27 +111,15 @@ export async function fetchAt(located: Located, id: number, at: number): Promise
   const header = E.readElement(probe, at);
   if (!readsAs(header, id)) return null;
   if (header.next - at > MAX_FETCHED_ELEMENT_BYTES) return null;
-  const window = await readPastHead(located, at, header.next - at, probe);
+  const window = await heldOrRead(located.source, probe, at, header.next - at, located.signal);
   return { window, element: header };
 }
 
 export function probed(located: Located, at: number, limit: number, held: Window): Promise<Window> {
-  const need = headerNeed(at, limit);
+  const need = E.headerNeed(at, limit);
   if (E.covers(held, at, need)) return Promise.resolve(held);
   const width = Math.min(ELEMENT_PROBE_BYTES, limit - at);
-  return readPastHead(located, at, width, held);
-}
-
-export async function readPastHead(
-  pass: SegmentPass,
-  at: number,
-  length: number,
-  held: Window,
-): Promise<Window> {
-  const need = available(at, length, held.fileSize);
-  if (E.covers(held, at, need)) return held;
-  const sized = { source: pass.source, fileSize: held.fileSize };
-  return windowAt(sized, at, length, pass.signal);
+  return heldOrRead(located.source, held, at, width, located.signal);
 }
 
 const ELEMENT_PROBE_BYTES = 4096;

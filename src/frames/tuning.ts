@@ -1,5 +1,6 @@
-import type { FetchKnobs, IndexFetch, Trip, WalkFetch } from "../io/source.js";
-import { givenSignal, MAX_CONCURRENCY } from "../io/source.js";
+import { givenSignal } from "../io/abort.js";
+import type { IndexFetch, Trip, WalkFetch } from "../io/source.js";
+import { MAX_CONCURRENCY } from "../io/source.js";
 import type { FrameOptions, FramePreset, FrameVia } from "./contract.js";
 
 export interface SettledFrameOptions {
@@ -11,18 +12,14 @@ export interface SettledFrameOptions {
   signal: AbortSignal | undefined;
 }
 
-export function settledFrameOptions(
-  options: FrameOptions,
-  trip: Trip | undefined,
-): SettledFrameOptions {
+export function settledFrameOptions(options: FrameOptions, trip: Trip): SettledFrameOptions {
   const via = options.via ?? DEFAULT_VIA;
   if (!FRAME_VIAS.has(via)) throw new TypeError(`unknown via ${String(via)}`);
   const strict = options.strict ?? false;
   if (typeof strict !== "boolean") throw new TypeError(`strict ${String(strict)} is not a boolean`);
   const preset = options.preset ?? DEFAULT_PRESET;
   if (!Object.hasOwn(TUNING, preset)) throw new TypeError(`unknown preset ${String(preset)}`);
-  const column = trip !== undefined && Object.hasOwn(TUNING[preset], trip) ? trip : "remote";
-  const shipped = TUNING[preset][column];
+  const shipped = TUNING[preset][trip];
   const { concurrency } = options;
   const knobsForIndex = {
     gapBytes: shipped.gapBytes,
@@ -38,6 +35,9 @@ export function settledFrameOptions(
 }
 
 type TuningByTrip = Record<Trip, FetchKnobs>;
+
+/** What a preset settles for one trip, where concurrency is the walk's reads in flight; the index buys with INDEX_CONCURRENCY. */
+interface FetchKnobs extends Pick<IndexFetch, "gapBytes">, WalkFetch {}
 
 const DEFAULT_VIA: FrameVia = "both";
 

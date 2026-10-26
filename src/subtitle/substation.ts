@@ -1,11 +1,11 @@
 import type { Frame } from "../frames/contract.js";
-import type { Track } from "../tracks.js";
+import type { Track } from "../vocabulary.js";
 import type { Assembler, Spool } from "./spool.js";
-import { clockFields, ENCODER, MS_PER_SECOND, timesOf, UTF8 } from "./text.js";
+import { clockFields, ENCODER, timesOf, UTF8 } from "./text.js";
 
 interface Script {
   text: string;
-  format: "ass" | "ssa";
+  format: Dialect;
 }
 
 export function substationScript(track: Track): Script | null {
@@ -16,20 +16,19 @@ export function substationScript(track: Track): Script | null {
 }
 
 export function startSubstation({ text: script, format }: Script, out: Spool): Assembler {
+  const { column, prefix } = DIALECTS[format];
   const eventsAt = script.indexOf("\n[Events]");
   const formatAt = eventsAt < 0 ? -1 : script.indexOf("Format:", eventsAt);
   const formatEnd = formatAt < 0 ? -1 : script.indexOf("\n", formatAt);
   const headEnd = formatEnd < 0 ? script.length : formatEnd + 1;
-  const firstColumn = format === "ass" ? "Layer" : "Marked";
-  const added =
-    eventsAt < 0 ? `[Events]\nFormat: ${firstColumn}, ${SUBSTATION_EVENT_COLUMNS}\n` : "";
+  const added = eventsAt < 0 ? `[Events]\nFormat: ${column}, ${SUBSTATION_EVENT_COLUMNS}\n` : "";
   const headText = `${lines(script.slice(0, headEnd))}${added}`;
   const trailerText = lines(script.slice(headEnd));
-  const opening = format === "ass" ? "Dialogue: " : `Dialogue: ${MARKED_PREFIX}`;
+  const opening = `Dialogue: ${prefix}`;
   out.write(headText);
   const order = new ReadOrder();
   const add = (frame: Frame) => {
-    const dialogue = dialogueOf(frame, format);
+    const dialogue = dialogueOf(frame, prefix);
     const released = order.admit(dialogue);
     writeDialogues(out, opening, released);
   };
@@ -40,6 +39,8 @@ export function startSubstation({ text: script, format }: Script, out: Spool): A
   };
   return { add, end };
 }
+
+type Dialect = keyof typeof DIALECTS;
 
 interface QueuedDialogue extends Dialogue {
   arrival: number;
@@ -89,14 +90,17 @@ class ReadOrder {
 }
 
 const CS_PER_SECOND = 100;
-const MS_PER_CS = MS_PER_SECOND / CS_PER_SECOND;
 
 const LAST_SUBSTATION_CS = 10 * 3600 * CS_PER_SECOND - 1;
 
 /** The Format line's columns after its first. */
 const SUBSTATION_EVENT_COLUMNS = "Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
 
-const MARKED_PREFIX = "Marked=";
+/** For each dialect, the first column of the Format line and the prefix before that column's value in a Dialogue line. */
+const DIALECTS = {
+  ass: { column: "Layer", prefix: "" },
+  ssa: { column: "Marked", prefix: "Marked=" },
+} as const;
 
 /** H:MM:SS.CC, whose hours the ten-hour cap keeps to one digit. */
 const TIME_BYTES = 10;
@@ -128,12 +132,13 @@ function lines(text: string): string {
 }
 
 /** A field stops at a NUL as at any byte not its own, so only the text is cut at the first one. */
-function dialogueOf(frame: Frame, format: "ass" | "ssa"): Dialogue {
+function dialogueOf(frame: Frame, prefix: string): Dialogue {
   const { data } = frame;
   const nul = data.indexOf(0);
   const order = leadingNumber(data, 0);
   const fieldAt = past(data, order.end, ",");
-  const layerAt = format === "ass" ? fieldAt : past(data, fieldAt, MARKED_PREFIX);
+  // A call with an empty prefix still costs every frame, so a dialect with nothing to skip makes none.
+  const layerAt = prefix === "" ? fieldAt : past(data, fieldAt, prefix);
   const layer = leadingNumber(data, layerAt);
   const restAt = past(data, layer.end, ",");
   let restEnd = nul < 0 ? data.length : nul;
@@ -142,7 +147,7 @@ function dialogueOf(frame: Frame, format: "ass" | "ssa"): Dialogue {
   }
   const rest = data.subarray(restAt, restEnd);
   const text = isUtf8(rest) ? rest : ENCODER.encode(UTF8.decode(rest));
-  const [start, end] = timesOf(frame, MS_PER_CS);
+  const [start, end] = timesOf(frame, CS_PER_SECOND);
   return { order: order.value, layer: String(layer.value), start, end, text };
 }
 

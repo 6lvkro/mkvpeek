@@ -6,7 +6,7 @@ export function startSrt(out: Spool): Assembler {
   let number = 0;
   const add = (frame: Frame) => {
     number += 1;
-    const [start, end] = timesOf(frame, 1);
+    const [start, end] = timesOf(frame, MS_PER_SECOND);
     const payload = UTF8.decode(frame.data);
     const event = `${String(number)}\n${srtTime(start)} --> ${srtTime(end)}\n${payload}\n\n`;
     out.write(event);

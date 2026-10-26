@@ -1,8 +1,10 @@
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
+import { heldOrRead } from "../io/windows.js";
 import type { Attachment } from "../vocabulary.js";
-import { type Located, probed, readPastHead, readsAs } from "./chain.js";
+import { type Located, probed, readsAs } from "./chain.js";
 import type { OpenedSegment } from "./header.js";
+import { ID } from "./ids.js";
 
 /** What each attached file states of itself, its bytes left where they are. */
 export async function readAttachments(
@@ -10,14 +12,14 @@ export async function readAttachments(
   signal: AbortSignal | undefined,
 ): Promise<Attachment[]> {
   const located = { ...opened, signal };
-  const at = located.offsets.get(E.ID.segment.ATTACHMENTS);
+  const at = located.offsets.get(ID.segment.ATTACHMENTS);
   if (at === undefined) return [];
   const window = await probed(located, at, located.head.fileSize, located.head);
   const attachmentsEl = E.readElement(window, at);
-  if (!readsAs(attachmentsEl, E.ID.segment.ATTACHMENTS)) return [];
+  if (!readsAs(attachmentsEl, ID.segment.ATTACHMENTS)) return [];
   const attachments: Attachment[] = [];
   const visit: Visit = async (_at, fileEl, held) => {
-    if (fileEl.id !== E.ID.attachment.FILE) return held;
+    if (fileEl.id !== ID.attachment.FILE) return held;
     const file = await readAttachedFile(located, fileEl, held);
     if (file === null) return null;
     attachments.push(file.file);
@@ -58,20 +60,20 @@ async function readAttachedFile(
     uid: null,
   };
   const visit: Visit = async (at, field, held) => {
-    if (field.id === E.ID.attachment.FILE_DATA) {
+    if (field.id === ID.attachment.FILE_DATA) {
       out.at = field.body;
       out.size = field.size;
       return held;
     }
     if (field.next - at > MAX_ATTACHED_FIELD_BYTES) return held;
-    const window = await readPastHead(located, at, field.next - at, held);
-    if (field.id === E.ID.attachment.FILE_NAME) {
+    const window = await heldOrRead(located.source, held, at, field.next - at, located.signal);
+    if (field.id === ID.attachment.FILE_NAME) {
       out.fileName = E.readUtf8(window, field);
-    } else if (field.id === E.ID.attachment.FILE_MIME) {
+    } else if (field.id === ID.attachment.FILE_MIME) {
       out.mimeType = E.readAscii(window, field);
-    } else if (field.id === E.ID.attachment.FILE_DESCRIPTION) {
+    } else if (field.id === ID.attachment.FILE_DESCRIPTION) {
       out.description = E.readUtf8(window, field);
-    } else if (field.id === E.ID.attachment.FILE_UID) {
+    } else if (field.id === ID.attachment.FILE_UID) {
       out.uid = E.readUid(window, field);
     }
     return window;

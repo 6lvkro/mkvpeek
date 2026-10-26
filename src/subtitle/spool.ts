@@ -1,4 +1,5 @@
 import type { Frame } from "../frames/contract.js";
+import type { Bytes } from "../vocabulary.js";
 import { ENCODER } from "./text.js";
 
 /** Writes a track's file into a spool, its head as soon as it starts. */
@@ -51,14 +52,14 @@ export class Spool {
     this.#waiting += text.length;
   }
 
-  /** A piece held as it is, for a file made of pieces alone. */
   put(piece: Uint8Array): void {
+    this.#closeText();
+    this.#closeRun();
     this.#pieces.push(piece);
     this.#waiting += piece.length;
   }
 
-  /** What was written since the last drain, as one array. */
-  drain(): Uint8Array<ArrayBuffer> {
+  drain(): Bytes {
     this.#waiting = 0;
     const alone = this.#pieces.length === 0 && this.#at === this.#from;
     if (alone) return this.#encoded();
@@ -86,7 +87,7 @@ export class Spool {
     this.#pieces.push(this.#encoded());
   }
 
-  #encoded(): Uint8Array<ArrayBuffer> {
+  #encoded(): Bytes {
     const text = this.#texts.join("");
     this.#texts = [];
     return ENCODER.encode(text);

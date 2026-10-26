@@ -1,4 +1,4 @@
-import { onAbort, untilAborted } from "./source.js";
+import { onAbort, untilAborted } from "./abort.js";
 
 type Gathered<T extends readonly Task[]> = {
   [K in keyof T]: Awaited<ReturnType<T[K]>>;
@@ -32,9 +32,9 @@ export class HaltableQueue<T> {
     this.#wake();
   }
 
+  /** Wakes no lane that waits, so whoever closes a halted queue wakes them with close. */
   halt(): void {
     this.#halted = true;
-    this.#wake();
     this.#onHalt();
   }
 

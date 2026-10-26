@@ -44,14 +44,13 @@ export interface Range {
   length: number;
 }
 
-export type IndexFetch = Pick<FetchKnobs, "gapBytes" | "concurrency">;
-
-export type WalkFetch = Pick<FetchKnobs, "blockAheadBytes" | "concurrency">;
-
-/** What a preset sets for one trip. */
-export interface FetchKnobs {
+export interface IndexFetch {
   /** Two ranges closer than this are fetched as one, gap included. */
   readonly gapBytes: number;
+  readonly concurrency: number;
+}
+
+export interface WalkFetch {
   /** How far past a block the walk reads ahead when it reads that block. */
   readonly blockAheadBytes: number;
   readonly concurrency: number;
@@ -64,19 +63,7 @@ export interface FetchKnobs {
  */
 export type Inflate = (deflated: Uint8Array, most: number) => Promise<Uint8Array>;
 
-export interface Watch {
-  onProgress: ReportBytes;
-  signal: AbortSignal;
-}
-
-/** A signal that fires with the first of the signals it links, or at its own abort, and then listens to none. */
-export interface Link {
-  signal: AbortSignal;
-  abort: (reason?: unknown) => void;
-  unlink: () => void;
-}
-
-type ReportBytes = (done: number, total: number) => void;
+export const TRIPS: Readonly<Record<Trip, true>> = { local: true, mount: true, remote: true };
 
 /** The opening read, wide enough for a typical header in one round trip. */
 export const HEAD_BYTES = 128 * 1024;
@@ -93,85 +80,10 @@ export const MAX_CONCURRENCY = 64;
 export const lend = (into: Uint8Array | undefined, bounded: number): Uint8Array | null =>
   into !== undefined && into.length >= bounded ? into.subarray(0, bounded) : null;
 
-export const givenSignal = (signal: AbortSignal | null | undefined): AbortSignal | undefined =>
-  signal ?? undefined;
-
-export function stopIfAborted(signal: AbortSignal | undefined): void {
-  const reason = abortReason(signal);
-  if (reason !== null) throw reason;
-}
-
-/** A Watch whose report cannot end the read by throwing, and is not made once the signal fires. */
-export function watchOver(signal: AbortSignal, report: ReportBytes): Watch {
-  const onProgress: ReportBytes = (done, total) => {
-    if (signal.aborted) return;
-    let returned: unknown;
-    try {
-      returned = report(done, total);
-    } catch {}
-    if (returned instanceof Promise) returned.catch(() => {});
-  };
-  return { onProgress, signal };
-}
-
 export function available(at: number, length: number, size: number): number {
   const addressable = Number.isInteger(at) && at >= 0 && Number.isInteger(length) && length >= 0;
   if (!addressable) {
     throw new RangeError(`a read asked for ${String(length)} bytes at ${String(at)}`);
   }
   return Math.max(0, Math.min(length, size - at));
-}
-
-export function linkedSignal(...signals: ReadonlyArray<AbortSignal | undefined>): Link {
-  const linked = new AbortController();
-  const unhooks: Array<() => void> = [];
-  const unlink = () => {
-    for (const unhook of unhooks.splice(0)) unhook();
-  };
-  const abort = (reason?: unknown) => {
-    unlink();
-    linked.abort(reason);
-  };
-  for (const signal of signals) {
-    if (signal === undefined) continue;
-    const fired = () => abort(signal.reason);
-    unhooks.push(onAbort(signal, fired));
-  }
-  return { signal: linked.signal, abort, unlink };
-}
-
-export function untilAborted<T>(answer: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const unhook = onAbort(signal, () => reject(abortReason(signal)));
-    answer.then(
-      (value) => {
-        unhook();
-        resolve(value);
-      },
-      (error: unknown) => {
-        unhook();
-        reject(error);
-      },
-    );
-  });
-}
-
-export function onAbort(signal: AbortSignal | undefined, run: () => void): () => void {
-  if (signal === undefined) return () => {};
-  if (signal.aborted) {
-    run();
-    return () => {};
-  }
-  signal.addEventListener("abort", run, { once: true });
-  return () => signal.removeEventListener("abort", run);
-}
-
-export function abortReason(signal: AbortSignal | undefined): Error | null {
-  if (signal?.aborted !== true) return null;
-  const { reason: cause } = signal;
-  try {
-    return cause instanceof Error ? cause : new Error(String(cause));
-  } catch {
-    return new Error("aborted", { cause });
-  }
 }

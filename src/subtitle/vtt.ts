@@ -15,7 +15,7 @@ interface VttCue {
 
 function cueBlock(frame: Frame): string {
   const { id, settings, text } = vttCueOf(UTF8.decode(frame.data));
-  const [start, end] = timesOf(frame, 1);
+  const [start, end] = timesOf(frame, MS_PER_SECOND);
   const idLine = id === "" ? "" : `${id}\n`;
   const timingTail = settings === "" ? "" : ` ${settings}`;
   return `\n${idLine}${vttTime(start)} --> ${vttTime(end)}${timingTail}\n${text}\n`;

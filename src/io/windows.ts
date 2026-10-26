@@ -1,5 +1,6 @@
 import type { Window } from "../ebml.js";
 import * as E from "../ebml.js";
+import { stopIfAborted } from "./abort.js";
 import { inParallel } from "./lanes.js";
 import {
   available,
@@ -7,7 +8,7 @@ import {
   LARGE_READ_BYTES,
   type Range,
   type SizedSource,
-  stopIfAborted,
+  type Source,
 } from "./source.js";
 
 export interface WindowPool {
@@ -15,26 +16,34 @@ export interface WindowPool {
   borrow(width: number): Lease | null;
 }
 
+/** For a window read into a lent slot, `release` gives the slot back to the pool, and the borrower calls it once. */
+export type Loaned = Window & { readonly release?: () => void };
+
 interface Lease {
   readonly bytes: Uint8Array;
   release: () => void;
 }
 
 export class WindowIndex {
-  readonly #sorted: Window[];
+  readonly #sorted: readonly Window[];
   readonly #widestSorted: number;
   readonly #head: Window | undefined;
   readonly #under: WindowIndex | undefined;
 
-  /** An index over the windows, which also answers from the index it stacks on. */
+  /** An index over windows taken in `at` order, which answers from the index stacked under it too. */
   constructor(windows: readonly Window[], head?: Window, under?: WindowIndex) {
-    this.#sorted = [...windows].sort((a, b) => a.at - b.at);
+    this.#sorted = windows;
     this.#widestSorted = this.#sorted.reduce((max, w) => Math.max(max, w.bytes.length), 0);
     this.#head = head;
     this.#under = under;
   }
 
+  /**
+   * A window that holds the whole range;
+   * which one answers where several do is not settled, so a caller asks for every byte it reads.
+   */
   find(at: number, length: number): Window | null {
+    if (this.#head !== undefined && holds(this.#head, at, length)) return this.#head;
     let low = 0;
     let high = this.#sorted.length;
     while (low < high) {
@@ -45,19 +54,44 @@ export class WindowIndex {
         high = mid;
       }
     }
-    let best = this.#head !== undefined && E.covers(this.#head, at, length) ? this.#head : null;
     for (let i = low - 1; i >= 0; i--) {
       const window = this.#sorted[i] as Window;
       if (at - window.at > this.#widestSorted) break;
-      if (!E.covers(window, at, length)) continue;
-      if (best === null || E.reachOf(window) > E.reachOf(best)) {
-        best = window;
-      }
+      if (holds(window, at, length)) return window;
     }
-    const below = this.#under?.find(at, length) ?? null;
-    if (below !== null && (best === null || E.reachOf(below) > E.reachOf(best))) return below;
-    return best;
+    return this.#under?.find(at, length) ?? null;
   }
+}
+
+export async function heldOrRead(
+  source: Source,
+  held: Window,
+  at: number,
+  length: number,
+  signal: AbortSignal | undefined,
+  pool?: WindowPool,
+): Promise<Loaned> {
+  if (holds(held, at, length)) return held;
+  const sized = { source, fileSize: held.fileSize };
+  const lease = pool?.borrow(length) ?? null;
+  if (lease === null) return windowAt(sized, at, length, signal);
+  let window: Window;
+  try {
+    window = await windowAt(sized, at, length, signal, lease.bytes);
+  } catch (error) {
+    lease.release();
+    throw error;
+  }
+  if (window.bytes.buffer !== lease.bytes.buffer) {
+    lease.release();
+    return window;
+  }
+  return { ...window, release: lease.release };
+}
+
+export function holds(window: Window, at: number, length: number): boolean {
+  const held = available(at, length, window.fileSize);
+  return E.covers(window, at, held);
 }
 
 export async function fetchSpans(
@@ -103,10 +137,7 @@ export function windowPool(slotBytes: number, slots: number): WindowPool {
   const free: Uint8Array[] = [];
   let unbuilt = slotBytes >= LARGE_READ_BYTES ? slots : 0;
   const lease = (slot: Uint8Array, width: number): Lease => {
-    let released = false;
     const release = () => {
-      if (released) throw new Error();
-      released = true;
       free.push(slot);
     };
     return { bytes: slot.subarray(0, width), release };
@@ -133,11 +164,7 @@ export async function windowAt(
   into?: Uint8Array,
 ): Promise<Window> {
   stopIfAborted(signal);
-  const answer: unknown = await source.read(at, length, into, signal);
-  const isBytes = ArrayBuffer.isView(answer) && (answer as Uint8Array).BYTES_PER_ELEMENT === 1;
-  if (!isBytes) throw new Error();
-  // Held as a plain Uint8Array, since what is kept from a window is sliced out of it and a Buffer's slice is a view.
-  const held = new Uint8Array(answer.buffer, answer.byteOffset, answer.byteLength);
+  const held = await source.read(at, length, into, signal);
   if (held.length < available(at, length, fileSize)) throw new Error();
   return { at, bytes: held, fileSize };
 }

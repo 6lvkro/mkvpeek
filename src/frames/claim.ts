@@ -1,30 +1,20 @@
-import type { Inflate } from "../io/source.js";
-import type { CueIndex } from "../matroska/cues.js";
-import { FRAMES_SCOPE, type Undo, undoFor } from "../matroska/encoding.js";
-import type { OpenedSegment, TrackEntry } from "../matroska/header.js";
-import { type TrackType, tagsOf, trackTypeOf } from "../tracks.js";
-import type { ContainerInfo } from "../vocabulary.js";
+import type { Undo } from "../matroska/encoding.js";
+import type { OpenedTrack } from "../matroska/header.js";
+import type { Track, TrackType } from "../vocabulary.js";
 
-export interface FrameFile extends OpenedSegment {
-  info: ContainerInfo;
-  inflate: Inflate;
-  firstClusterTicks(signal: AbortSignal): Promise<number | null>;
-  cues(signal: AbortSignal): Promise<CueIndex>;
-}
+export type ClaimsByNumber = ReadonlyMap<number, TrackClaim>;
 
 export interface TrackClaim {
-  entry: TrackEntry;
+  track: Track;
   /** The NUMBER_OF_FRAMES the container states for the track, or null where it states none. */
   statedFrames: number | null;
   undo: Undo | null;
 }
 
-export function claimFor(entry: TrackEntry, file: FrameFile): TrackClaim | null {
-  if (!READABLE_TYPES.has(trackTypeOf(entry))) return null;
-  const undo = undoFor(entry.encodings, FRAMES_SCOPE, file.inflate);
-  if (undo === false) return null;
-  const statedFrames = statedFrameCount(file, entry);
-  return { entry, statedFrames, undo };
+export function claimFor({ track, undo }: OpenedTrack): TrackClaim | null {
+  if (!READABLE_TYPES.has(track.type) || undo === false) return null;
+  const statedFrames = statedFrameCount(track);
+  return { track, statedFrames, undo };
 }
 
 /**
@@ -40,8 +30,8 @@ export function vouchable({ statedFrames }: TrackClaim, count: number, strict: b
 /** Subtitle blocks are unlaced, and each subtitle frame has a cue point. */
 const READABLE_TYPES: ReadonlySet<TrackType> = new Set(["subtitle"]);
 
-function statedFrameCount(file: FrameFile, entry: TrackEntry): number | null {
-  const stated = tagsOf(file, entry).find((tag) => tag.name === "NUMBER_OF_FRAMES");
+function statedFrameCount({ tags }: Track): number | null {
+  const stated = tags.find((tag) => tag.name === "NUMBER_OF_FRAMES");
   if (stated === undefined) return null;
   const count = stated.value.trim() === "" ? Number.NaN : Number(stated.value);
   return Number.isInteger(count) ? count : null;

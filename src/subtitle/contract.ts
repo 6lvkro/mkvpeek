@@ -1,5 +1,4 @@
-import type { Track } from "../tracks.js";
-import type { Bytes } from "../vocabulary.js";
+import type { Bytes, Track } from "../vocabulary.js";
 
 export interface SubtitleFile<T = Bytes> {
   track: Track;

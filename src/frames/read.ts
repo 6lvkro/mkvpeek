@@ -1,17 +1,18 @@
-import { linkedSignal, stopIfAborted, watchOver } from "../io/source.js";
+import { linkedSignal, stopIfAborted, watchOver } from "../io/abort.js";
 import type { CuePosition } from "../matroska/cues.js";
-import type { TrackEntry } from "../matroska/header.js";
+import type { OpenedTrack } from "../matroska/header.js";
 import { refusalOf } from "../refusal.js";
 import { RefusalError } from "../vocabulary.js";
-import { claimFor, type FrameFile, type TrackClaim } from "./claim.js";
+import { type ClaimsByNumber, claimFor, type TrackClaim } from "./claim.js";
 import type { Frame, FrameFinder, FrameVia } from "./contract.js";
+import type { FrameFile } from "./file.js";
 import { framesByIndex, type IndexedGroup } from "./indexed.js";
 import type { SettledFrameOptions } from "./tuning.js";
 import { framesByWalk } from "./walked.js";
 
 export async function* framesOf(
   file: FrameFile,
-  entries: readonly TrackEntry[],
+  openedTracks: readonly OpenedTrack[],
   {
     via,
     strict,
@@ -27,8 +28,8 @@ export async function* framesOf(
     watchOver(signal, (doneBytes, totalBytes) => onProgress?.({ finder, doneBytes, totalBytes }));
   try {
     stopIfAborted(signal);
-    if (entries.length === 0) return;
-    const claims = claimsOf(file, entries);
+    if (openedTracks.length === 0) return;
+    const claims = claimsOf(openedTracks);
     // The last cue whose frame the index handed over, past which a walk takes over.
     let through: CuePosition | undefined;
     if (via !== "walk") {
@@ -55,17 +56,12 @@ export async function* framesOf(
       yield frame;
     }
   } catch (error) {
-    throw refusalOf(error, signal, "unreadable");
+    throw refusalOf(error, signal);
   } finally {
     unlink();
   }
 }
 
-/**
- * The index's next group, or null where it refused and the walk is to take over.
- *
- * Only the index's own failure is caught, so what a reader throws into the frames ends them.
- */
 async function nextGroup(
   groups: AsyncGenerator<IndexedGroup>,
   via: FrameVia,
@@ -78,12 +74,12 @@ async function nextGroup(
   }
 }
 
-function claimsOf(file: FrameFile, entries: readonly TrackEntry[]): TrackClaim[] {
-  const claims: TrackClaim[] = [];
-  for (const entry of entries) {
-    const claim = claimFor(entry, file);
+function claimsOf(openedTracks: readonly OpenedTrack[]): ClaimsByNumber {
+  const claims = new Map<number, TrackClaim>();
+  for (const openedTrack of openedTracks) {
+    const claim = claimFor(openedTrack);
     if (claim === null) throw new RefusalError("unreadable");
-    claims.push(claim);
+    claims.set(openedTrack.track.number, claim);
   }
   return claims;
 }

@@ -3,6 +3,7 @@
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
 import type { Inflate } from "../io/source.js";
+import { ID } from "./ids.js";
 
 export interface ContentEncoding {
   order: number;
@@ -25,13 +26,13 @@ export function encodingsIn(window: Window, list: Element): ContentEncoding[] | 
   try {
     const encodings: ContentEncoding[] = [];
     for (const el of E.children(window, list.body, list.size)) {
-      if (el.id === E.ID.contentEncoding.ENCODING) {
+      if (el.id === ID.contentEncoding.ENCODING) {
         encodings.push(encodingOf(window, el));
       }
     }
     return encodings;
   } catch (error) {
-    if (!E.isGrammarError(error)) throw error;
+    E.throwUnlessGrammar(error);
     return null;
   }
 }
@@ -111,13 +112,13 @@ function encodingOf(window: Window, encodingEl: Element): ContentEncoding {
   let compression: ContentCompression = { algo: ZLIB_ALGO, settings: null };
   for (const field of E.children(window, encodingEl.body, encodingEl.size)) {
     const { id } = field;
-    if (id === E.ID.contentEncoding.ORDER) {
+    if (id === ID.contentEncoding.ORDER) {
       order = E.readUint(window, field);
-    } else if (id === E.ID.contentEncoding.SCOPE) {
+    } else if (id === ID.contentEncoding.SCOPE) {
       scope = E.readUint(window, field);
-    } else if (id === E.ID.contentEncoding.TYPE) {
+    } else if (id === ID.contentEncoding.TYPE) {
       type = E.readUint(window, field);
-    } else if (id === E.ID.contentEncoding.COMPRESSION) {
+    } else if (id === ID.contentEncoding.COMPRESSION) {
       compression = compressionOf(window, field);
     }
   }
@@ -128,10 +129,10 @@ function compressionOf(window: Window, compressionEl: Element): ContentCompressi
   let algo = ZLIB_ALGO;
   let settings: Uint8Array | null = null;
   for (const field of E.children(window, compressionEl.body, compressionEl.size)) {
-    if (field.id === E.ID.contentEncoding.COMP_ALGO) {
+    if (field.id === ID.contentEncoding.COMP_ALGO) {
       algo = E.readUint(window, field);
-    } else if (field.id === E.ID.contentEncoding.COMP_SETTINGS) {
-      settings = E.readBytes(window, field.body, field.size).slice();
+    } else if (field.id === ID.contentEncoding.COMP_SETTINGS) {
+      settings = E.readBytes(window, field.body, field.size);
     }
   }
   return { algo, settings };

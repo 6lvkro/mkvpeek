@@ -1,34 +1,23 @@
 import { disposable } from "../disposal.js";
-import { claimFor, type FrameFile } from "../frames/claim.js";
+import { claimFor } from "../frames/claim.js";
 import type { Frame, FrameOptions } from "../frames/contract.js";
+import type { FrameFile } from "../frames/file.js";
 import { framesOf } from "../frames/read.js";
+import { timelineOf } from "../frames/timeline.js";
 import { settledFrameOptions } from "../frames/tuning.js";
-import {
-  givenSignal,
-  type Inflate,
-  type Link,
-  linkedSignal,
-  type Source,
-  stopIfAborted,
-  untilAborted,
-} from "../io/source.js";
+import { givenSignal, type Link, linkedSignal, stopIfAborted, untilAborted } from "../io/abort.js";
+import type { Inflate, Source } from "../io/source.js";
 import { readAttachments } from "../matroska/attachments.js";
 import { readCues } from "../matroska/cues.js";
 import {
   type OpenedSegment,
+  type OpenedTrack,
   openSegment,
   readFirstClusterTicks,
   readInfo,
-  type TrackEntry,
 } from "../matroska/header.js";
 import { refusalOf } from "../refusal.js";
-import { allTracks, type Track, trackOf } from "../tracks.js";
-import {
-  type Abortable,
-  type Attachment,
-  type ContainerInfo,
-  RefusalError,
-} from "../vocabulary.js";
+import type { Abortable, Attachment, ContainerInfo, Track } from "../vocabulary.js";
 import type { Container, Listing } from "./contract.js";
 import { leaseOf, type Opener, type Target, type TargetLease } from "./target.js";
 
@@ -82,14 +71,14 @@ class LeasedContainer implements Container {
   #closed: Promise<void> | null = null;
   declare readonly [Symbol.asyncDispose]: () => Promise<void>;
 
-  constructor(lease: TargetLease, opened: OpenedSegment, info: ContainerInfo, inflate: Inflate) {
+  constructor(lease: TargetLease, opened: OpenedSegment, info: ContainerInfo) {
     const source = withPendingReads(lease.source, this.#pending);
     const held = { ...opened, source };
-    this.tracks = allTracks(opened);
+    this.tracks = opened.openedTracks.map(handedOut);
     this.info = { ...info };
     this.#lease = lease;
     const closing = this.#closing.signal;
-    this.#file = fileOf(held, info, inflate, closing);
+    this.#file = fileOf(held, info, closing);
     this.#attachments = sharedAndKept((signal) => readAttachments(held, signal), closing);
     disposable(this, () => this.close());
   }
@@ -109,15 +98,15 @@ class LeasedContainer implements Container {
   }
 
   readable(track: Track): boolean {
-    const entry = entryOf(this.#file, track);
-    return claimFor(entry, this.#file) !== null;
+    const openedTrack = openedTrackOf(this.#file, track);
+    return claimFor(openedTrack) !== null;
   }
 
   frames(tracks: readonly Track[], options: FrameOptions = {}): AsyncIterableIterator<Frame> {
-    const entries = entriesOf(this.#file, tracks);
+    const openedTracks = openedTracksOf(this.#file, tracks);
     const callerOptions = { ...options };
     const settled = settledFrameOptions(callerOptions, this.#lease.source.trip);
-    return framesOf(this.#file, entries, settled, this.#closing.signal);
+    return framesOf(this.#file, openedTracks, settled, this.#closing.signal);
   }
 
   close(): Promise<void> {
@@ -139,9 +128,8 @@ async function leased(
 ): Promise<Container> {
   try {
     const opened = await openSegment(lease.source, signal, inflate);
-    if (typeof opened === "string") throw new RefusalError(opened);
     const info = await readInfo(opened, signal);
-    return new LeasedContainer(lease, opened, info, inflate);
+    return new LeasedContainer(lease, opened, info);
   } catch (error) {
     await lease.release?.();
     throw error;
@@ -150,8 +138,7 @@ async function leased(
 
 function withPendingReads(source: Source, pending: Set<Promise<unknown>>): Source {
   const read: Source["read"] = (...args) => {
-    // Against its type, a source in JavaScript may answer the bytes rather than a promise of them.
-    const reading = Promise.resolve(source.read(...args));
+    const reading = source.read(...args);
     pending.add(reading);
     const forget = () => pending.delete(reading);
     reading.then(forget, forget);
@@ -160,18 +147,24 @@ function withPendingReads(source: Source, pending: Set<Promise<unknown>>): Sourc
   return { ...source, read };
 }
 
-function fileOf(
-  opened: OpenedSegment,
-  info: ContainerInfo,
-  inflate: Inflate,
-  closing: AbortSignal,
-): FrameFile {
+function handedOut({ track }: OpenedTrack): Track {
+  const codecPrivate = track.codecPrivate === null ? null : track.codecPrivate.slice();
+  const flags = { ...track.flags };
+  const tags = track.tags.map((tag) => ({ ...tag }));
+  return { ...track, codecPrivate, flags, tags };
+}
+
+function fileOf(opened: OpenedSegment, info: ContainerInfo, closing: AbortSignal): FrameFile {
   const firstClusterTicks = sharedAndKept(
     (signal) => readFirstClusterTicks(opened, signal),
     closing,
   );
   const cues = sharedAndKept((signal) => readCues(opened, signal), closing);
-  return { ...opened, info, inflate, firstClusterTicks, cues };
+  const timeline = (signal: AbortSignal) => {
+    const first = () => firstClusterTicks(signal);
+    return timelineOf(opened.openedTracks, info, first);
+  };
+  return { ...opened, timeline, cues };
 }
 
 /**
@@ -209,19 +202,16 @@ function sharedAndKept<T>(read: PartRead<T>, closing: AbortSignal): PartRead<T> 
   };
 }
 
-function entriesOf(file: FrameFile, tracks: readonly Track[]): TrackEntry[] {
-  const chosen = new Set<TrackEntry>();
-  for (const track of tracks) chosen.add(entryOf(file, track));
-  return file.trackEntries.filter((entry) => chosen.has(entry));
+function openedTracksOf(file: FrameFile, tracks: readonly Track[]): OpenedTrack[] {
+  const chosen = new Set<OpenedTrack>();
+  for (const track of tracks) chosen.add(openedTrackOf(file, track));
+  return file.openedTracks.filter((openedTrack) => chosen.has(openedTrack));
 }
 
-function entryOf(file: FrameFile, track: Track): TrackEntry {
+function openedTrackOf(file: FrameFile, track: Track): OpenedTrack {
   const { index } = track;
-  const entry = file.trackEntries[index];
-  if (entry !== undefined) {
-    const own = trackOf(file, entry);
-    if (statesTheSame(track, own)) return entry;
-  }
+  const openedTrack = file.openedTracks[index];
+  if (openedTrack !== undefined && statesTheSame(track, openedTrack.track)) return openedTrack;
   throw new TypeError(`track ${String(index)} is not a track of this file`);
 }
 
