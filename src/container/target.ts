@@ -52,7 +52,10 @@ function guarded(source: Source): LeasedSource {
       throw sourceFailed("answered a read short of the bytes its size holds there");
     }
     // Held as a plain Uint8Array, since what is kept from a window is sliced out of it and a Buffer's slice is a view.
-    return new Uint8Array(answer.buffer, answer.byteOffset, answer.byteLength);
+    const held = new Uint8Array(answer.buffer, answer.byteOffset, answer.byteLength);
+    const { buffer } = answer;
+    const resizable = "resizable" in buffer && buffer.resizable === true;
+    return buffer instanceof ArrayBuffer && !resizable ? held : held.slice();
   };
   return {
     size,
