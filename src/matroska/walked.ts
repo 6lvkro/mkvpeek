@@ -172,7 +172,8 @@ export async function* walkFrames(
       await park();
     }
     if (failures.length > 0) throw failures[0];
-    if (refusals.some((code) => code !== undefined)) throw new RefusalError("unreadable");
+    const refusal = refusals.find((code) => code !== undefined);
+    if (refusal !== undefined) throw new RefusalError(refusal);
     watch.onProgress(fileSize, fileSize);
   } finally {
     ended.abort();

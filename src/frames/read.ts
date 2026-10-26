@@ -2,7 +2,7 @@ import { linkedSignal, stopIfAborted, watchOver } from "../io/abort.js";
 import type { CuePosition } from "../matroska/cues.js";
 import type { OpenedTrack } from "../matroska/header.js";
 import { refusalOf } from "../refusal.js";
-import { RefusalError } from "../vocabulary.js";
+import { type RefusalCode, RefusalError } from "../vocabulary.js";
 import { type ClaimsByNumber, claimFor, type TrackClaim } from "./claim.js";
 import type { Frame, FrameFinder, FrameVia } from "./contract.js";
 import type { FrameFile } from "./file.js";
@@ -36,9 +36,9 @@ export async function* framesOf(
       const watch = watching("index");
       const groups = framesByIndex(file, claims, knobsForIndex, watch, strict);
       for (
-        let next = await nextGroup(groups, via);
+        let next = await nextGroup(groups, via, signal);
         next !== null;
-        next = await nextGroup(groups, via)
+        next = await nextGroup(groups, via, signal)
       ) {
         if (next.done === true) return;
         // Popped, so each frame is let go as it is handed over.
@@ -62,15 +62,19 @@ export async function* framesOf(
   }
 }
 
+const WALK_TAKES_OVER: ReadonlySet<RefusalCode> = new Set(["unreadable", "source-failed"]);
+
 async function nextGroup(
   groups: AsyncGenerator<IndexedGroup>,
   via: FrameVia,
+  signal: AbortSignal,
 ): Promise<IteratorResult<IndexedGroup> | null> {
   try {
     return await groups.next();
   } catch (error) {
-    if (via === "index") throw error;
-    return null;
+    const refusal = refusalOf(error, signal);
+    if (via === "both" && WALK_TAKES_OVER.has(refusal.code)) return null;
+    throw refusal;
   }
 }
 

@@ -89,7 +89,7 @@ export type Bytes = ReturnType<Uint8Array["slice"]>;
  *
  * - `malformed`: the container does not conform.
  *
- * - `unreadable`: the container conforms, but this reader's path could not do it.
+ * - `unreadable`: no break of the spec was found, but this reader's path could not do it.
  *
  * - `source-failed`: the bytes did not arrive; retry, or check the transport.
  *
