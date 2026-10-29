@@ -14,8 +14,7 @@ export interface Container extends AsyncDisposal {
   /** Read by the first call that asks, and kept. */
   attachments(options?: Abortable): Promise<Attachment[]>;
   /**
-   * Whether `frames` reads a track's type and its encodings,
-   * as it reads no type other than subtitle and no frames stored in an encoding this reader does not undo.
+   * Whether `frames` reads this track, that is, a subtitle track in an encoding this reader undoes.
    *
    * It throws a `TypeError` for a track that does not state, value for value, one of the tracks listed at the open.
    */

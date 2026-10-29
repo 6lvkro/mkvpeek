@@ -10,9 +10,11 @@ import { startVtt } from "./vtt.js";
 
 export interface SubtitleOptions extends FrameOptions {
   /**
-   * The formats written out, unless named: the text ones, or every one when `tracks` is named.
+   * The formats to write.
    *
    * An unknown one is a TypeError.
+   *
+   * @defaultValue the text ones, or every one when `tracks` is named
    */
   formats?: readonly SubtitleFormat[];
   /**
@@ -24,10 +26,10 @@ export interface SubtitleOptions extends FrameOptions {
 }
 
 /**
- * The format `subtitleFile` writes a track in: ASS, SSA, SubRip, WebVTT, or a PGS track's .sup.
+ * The format `subtitleFile` writes a track in, one of ASS, SSA, SubRip, WebVTT, or a PGS track's .sup.
  *
- * Null for any other track:
- * VobSub, a codec it does not know, or a SubStation track whose `codecPrivate` is null.
+ * Null for any other track, such as VobSub, a codec it does not know,
+ * or a SubStation track whose `codecPrivate` is null.
  */
 export function subtitleFormat(track: Track): SubtitleFormat | null {
   return assemblyOf(track)?.format ?? null;

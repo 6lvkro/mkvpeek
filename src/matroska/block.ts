@@ -17,7 +17,6 @@ export interface BlockFrame {
   payload: Uint8Array;
 }
 
-/** A block's frame as the file stores it, with the undo its track's claim names. */
 export interface StoredFrame {
   trackNumber: number;
   startTicks: number;

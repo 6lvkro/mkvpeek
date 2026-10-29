@@ -45,7 +45,6 @@ export const MAX_VINT_BYTES = 8;
 export const headerNeed = (at: number, end: number): number =>
   Math.min(ELEMENT_HEADER_BYTES, end - at);
 
-/** Decoded as a sized element that ends within its parent. */
 export const fits = (el: Element | OpenElement | Unread, end: number): el is Element =>
   decoded(el) && el.next <= end;
 
@@ -197,7 +196,6 @@ function offsetOf(window: Window, at: number, length: number): number {
   return start < 0 || start + length > window.bytes.length ? -1 : start;
 }
 
-/** The all-ones shape of a size vint, which means the size is unknown. */
 function vintAllOnes(bytes: Uint8Array, start: number, length: number): boolean {
   const leadValueBits = ALL_BITS >> length;
   if (((bytes[start] as number) & leadValueBits) !== leadValueBits) return false;

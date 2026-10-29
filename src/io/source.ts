@@ -22,7 +22,7 @@ export interface Source {
    * @param signal The signal of the read that asks, for a source that can cut a read in flight.
    */
   read(at: number, length: number, into?: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>;
-  /** Never called on a source handed in: whoever opened a source closes it. */
+  /** Never called on a source handed in. Whoever opened a source closes it. */
   close?(): Promise<void>;
   /** A source that states none is read as `remote`. */
   trip?: Trip;

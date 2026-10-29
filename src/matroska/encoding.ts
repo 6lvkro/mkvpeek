@@ -72,7 +72,6 @@ export function undoFor(
   };
 }
 
-/** The ContentCompAlgo a ContentCompression means when it states none. */
 const ZLIB_ALGO = 0;
 
 const HEADER_STRIPPING_ALGO = 3;
