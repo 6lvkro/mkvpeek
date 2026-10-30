@@ -75,8 +75,6 @@ export const HEAD_BYTES = 128 * 1024;
  */
 export const LARGE_READ_BYTES = 16 * 1024;
 
-export const MAX_CONCURRENCY = 64;
-
 export const lend = (into: Uint8Array | undefined, bounded: number): Uint8Array | null =>
   into !== undefined && into.length >= bounded ? into.subarray(0, bounded) : null;
 

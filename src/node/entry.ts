@@ -7,11 +7,10 @@
 import type { Container, Listing } from "../container/contract.js";
 import { openWith, type Platform, peekWith } from "../container/open.js";
 import type { Target } from "../container/target.js";
-import { isHttpUrl, namesAuthority } from "../io/http.js";
+import { isHttpUrl, namesAuthority, urlSource } from "../io/http.js";
 import type { Source } from "../io/source.js";
 import { type Abortable, RefusalError } from "../vocabulary.js";
 import { fileSource } from "./file.js";
-import { urlSource } from "./http.js";
 import { inflateByZlib } from "./inflate.js";
 
 /**

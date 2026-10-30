@@ -1,6 +1,6 @@
-import type { AsyncDisposal } from "../disposal.js";
-import { bytesRange, type Hop, type HopSender, type OwnedTransport, rangeSource } from "./range.js";
-import type { Source } from "./source.js";
+import { type AsyncDisposal, disposable } from "../disposal.js";
+import { abortReason, givenSignal, linkedSignal } from "./abort.js";
+import { available, HEAD_BYTES, lend, type Source } from "./source.js";
 
 export interface UrlOptions {
   /** Sent with every request, but for Host, Range and Accept-Encoding, which the transport owns. */
@@ -14,9 +14,9 @@ export interface UrlOptions {
   /**
    * How long the source may deliver nothing before the read is refused.
    *
-   * A read that goes quiet where a redirect led is tried once more from the start, so its refusal can take twice as long.
+   * A read that goes quiet where a redirect led is tried once more from the start, so either wait can double.
    *
-   * @defaultValue no limit (a socket that has gone quiet waits until the call's `signal` cuts it)
+   * @defaultValue no limit (a read waits until the call's `signal` cuts it, and Node's fetch gives up after 300 seconds of nothing)
    */
   stallMs?: number | null;
 }
@@ -28,9 +28,6 @@ export const whyCredentialed = (parsed: URL): string | null =>
 
 export const namesAuthority = (target: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
 
-export const callerHeaders = (options: UrlOptions): Record<string, string> =>
-  withoutHeaders(options.headers ?? {}, TRANSPORT_OWNED_HEADERS);
-
 /**
  * An HTTP source over `fetch`.
  *
@@ -40,8 +37,164 @@ export async function urlSource(
   url: string,
   options: UrlOptions = {},
 ): Promise<Source & AsyncDisposal> {
-  const transport = fetchTransport(url, options);
-  return rangeSource(url, transport, options.stallMs);
+  const send = options.fetch ?? globalThis.fetch;
+  const headers = withoutHeaders(options.headers ?? {}, TRANSPORT_OWNED_HEADERS);
+  const start: Hop = { url: admittedUrl(url), headers };
+  const { stallMs } = options;
+  const effectiveStallMs =
+    stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
+      ? stallMs
+      : null;
+  // Skipping hops would hand a caller's fetch a URL other than the string given,
+  // so then where a redirect led is not remembered.
+  let landing: Hop | null = null;
+  let head: { total: number; bytes: Uint8Array } | null = null;
+
+  const acceptedTotal = (response: Response, from: number): number => {
+    if (response.status !== 206) {
+      throw new Error(
+        `${url} answered HTTP ${String(response.status)} to a Range request; this reader needs a server that serves ranges`,
+      );
+    }
+    const encoding = response.headers.get("content-encoding");
+    if (encoding !== null && encoding.trim().toLowerCase() !== "identity") {
+      const refused = new Error(
+        `${url} answered a range in another encoding, and this reader asked for identity`,
+      );
+      throw Object.assign(refused, { encoding });
+    }
+    const stated = response.headers.get("content-range") ?? "";
+    const contentRange = /^bytes\s+(\d+)-\d+\/(\d+)\s*$/.exec(stated);
+    if (contentRange === null) {
+      throw new Error(`${url} did not state a total length in Content-Range`);
+    }
+    const answered = Number(contentRange[1]);
+    if (answered !== from) {
+      throw new Error(
+        `${url} answered a range from ${String(answered)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
+      );
+    }
+    return Number(contentRange[2]);
+  };
+
+  const fetchRange = async (
+    hop: Hop,
+    from: number,
+    to: number,
+    into: Uint8Array,
+    at: number,
+    caller: AbortSignal | undefined,
+  ) => {
+    const dog = watchdog(url, effectiveStallMs, caller);
+    try {
+      const sent = new Headers(hop.headers);
+      const range = `bytes=${String(from)}-${String(to)}`;
+      sent.set("Range", range);
+      const init = { ...(dog.signal === undefined ? {} : { signal: dog.signal }), headers: sent };
+      const target = hop === start ? url : hop.url.href;
+      const response = await send(target, init);
+      const reader = response.body?.getReader();
+      try {
+        const total = acceptedTotal(response, from);
+        if (total === 0) return { landed: 0, total };
+        const landed = await bodyInto(url, reader, into, at, dog);
+        const reached = response.redirected ? URL.parse(response.url) : null;
+        if (hop === start && options.fetch === undefined && reached !== null) {
+          landing = fetchLanding(start, reached);
+        }
+        return { landed, total };
+      } finally {
+        await reader?.cancel().catch(() => {});
+        if (nextTurn !== undefined) await new Promise((resume) => nextTurn(resume));
+      }
+    } finally {
+      dog.off();
+    }
+  };
+
+  /**
+   * Where the remembered hop fails for any reason but the caller's signal,
+   * it is forgotten and the hops are followed once more from the start.
+   */
+  const exchange = async (
+    from: number,
+    to: number,
+    into: Uint8Array,
+    at: number,
+    caller: AbortSignal | undefined,
+  ) => {
+    const tried = landing;
+    if (tried === null) return fetchRange(start, from, to, into, at, caller);
+    try {
+      return await fetchRange(tried, from, to, into, at, caller);
+    } catch (error) {
+      if (abortReason(caller) !== null) throw error;
+      if (landing === tried) {
+        landing = null;
+      }
+      return fetchRange(start, from, to, into, at, caller);
+    }
+  };
+
+  const headFor = async (caller: AbortSignal | undefined) => {
+    if (head !== null) return head;
+    const into = new Uint8Array(HEAD_BYTES);
+    const { landed, total } = await exchange(0, HEAD_BYTES - 1, into, 0, caller);
+    const kept = Math.min(landed, total);
+    const bytes = into.subarray(0, kept);
+    head = { total, bytes };
+    return head;
+  };
+
+  const overRanges = async (
+    at: number,
+    bounded: number,
+    into: Uint8Array | null,
+    caller: AbortSignal | undefined,
+  ) => {
+    const out = into ?? new Uint8Array(bounded);
+    let written = 0;
+    for (let rounds = 1; written < bounded; rounds += 1) {
+      if (rounds > MAX_RESPONSES_PER_READ) {
+        throw new Error(
+          `${url} dribbled ${String(written)} bytes over ${String(MAX_RESPONSES_PER_READ)} responses for one read; this reader does not pay a request per byte`,
+        );
+      }
+      const from = at + written;
+      const { landed } = await exchange(from, at + bounded - 1, out, written, caller);
+      if (landed === 0) {
+        throw new Error(`${url} answered a range from ${String(from)} with no bytes in it`);
+      }
+      written += landed;
+    }
+    return out.subarray(0, written);
+  };
+
+  const size = async (given?: AbortSignal) => (await headFor(givenSignal(given))).total;
+  const read = async (at: number, length: number, into?: Uint8Array, given?: AbortSignal) => {
+    const caller = givenSignal(given);
+    const { total, bytes } = await headFor(caller);
+    const bounded = available(at, length, total);
+    const lent = lend(into, bounded);
+    if (at + bounded <= bytes.length) {
+      if (lent === null) return new Uint8Array(bytes.subarray(at, at + bounded));
+      lent.set(bytes.subarray(at, at + bounded));
+      return lent;
+    }
+    if (at < bytes.length) {
+      const fromHead = bytes.length - at;
+      const out = lent ?? new Uint8Array(bounded);
+      out.set(bytes.subarray(at, bytes.length));
+      const room = out.subarray(fromHead);
+      const tail = await overRanges(bytes.length, bounded - fromHead, room, caller);
+      return out.subarray(0, fromHead + tail.length);
+    }
+    return overRanges(at, bounded, lent, caller);
+  };
+
+  const release = () => Promise.resolve();
+  const source: Source = { size, read, close: release, trip: "remote" };
+  return disposable(source, release);
 }
 
 export function isHttpUrl(target: string): boolean {
@@ -49,37 +202,20 @@ export function isHttpUrl(target: string): boolean {
   return parsed !== null && speaksHttp(parsed);
 }
 
-export function admittedUrl(url: string): URL {
-  const parsed = URL.parse(url);
-  if (parsed === null) throw new Error(`${url} is not a URL`);
-  const why = whyInadmissible(parsed);
-  if (why !== null) throw new Error(`${url} ${why}`);
-  return parsed;
+interface Hop {
+  url: URL;
+  headers: Readonly<Record<string, string>>;
 }
 
-/** For the start hop, fetch is handed the string `url` as given. */
-export function fetchHops(url: string, start: Hop, fetchImpl: typeof globalThis.fetch): HopSender {
-  return async (hop, from, to, signal) => {
-    const headers = new Headers(hop.headers);
-    const range = bytesRange(from, to);
-    headers.set("Range", range);
-    const init = { ...(signal === undefined ? {} : { signal }), headers };
-    const target = hop === start ? url : hop.url.href;
-    const response = await fetchImpl(target, init);
-    const reader = response.body?.getReader();
-    const cancel = async () => {
-      await reader?.cancel().catch(() => {});
-    };
-    const reply = {
-      status: response.status,
-      header: (name: string) => response.headers.get(name),
-      body: chunksOf(reader),
-      cancel,
-    };
-    const landed = response.redirected ? URL.parse(response.url) : null;
-    return { reply, hop: landed === null ? null : fetchLanding(hop, landed) };
-  };
+interface Watchdog {
+  signal: AbortSignal | undefined;
+  alive: () => void;
+  off: () => void;
 }
+
+const MAX_RESPONSES_PER_READ = 64;
+
+const IDLE_CHUNK_LIMIT = 1000;
 
 const CROSS_ORIGIN_STRIPPED_HEADERS: ReadonlySet<string> = new Set([
   "authorization",
@@ -89,18 +225,16 @@ const CROSS_ORIGIN_STRIPPED_HEADERS: ReadonlySet<string> = new Set([
 
 const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set(["host", "range", "accept-encoding"]);
 
-function fetchTransport(url: string, options: UrlOptions): OwnedTransport {
-  const { fetch: fetchImpl = globalThis.fetch } = options;
-  const start = { url: admittedUrl(url), headers: callerHeaders(options) };
-  const send = fetchHops(url, start, fetchImpl);
-  const followEachRead: HopSender = async (hop, from, to, signal) => {
-    const { reply } = await send(hop, from, to, signal);
-    return { reply, hop: null };
-  };
-  // Skipping hops would hand a caller's fetch a URL other than the string given.
-  const chosen = options.fetch === undefined ? send : followEachRead;
-  const dispose = () => {};
-  return { start, send: chosen, dispose };
+const { setImmediate: nextTurn } = globalThis as {
+  setImmediate?: (callback: (value: unknown) => void) => unknown;
+};
+
+function admittedUrl(url: string): URL {
+  const parsed = URL.parse(url);
+  if (parsed === null) throw new Error(`${url} is not a URL`);
+  const why = whyInadmissible(parsed);
+  if (why !== null) throw new Error(`${url} ${why}`);
+  return parsed;
 }
 
 /**
@@ -126,15 +260,62 @@ function withoutHeaders(
   return Object.fromEntries(kept);
 }
 
-async function* chunksOf(
+async function bodyInto(
+  named: string,
   reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
-): AsyncIterable<Uint8Array> {
-  if (reader === undefined) return;
+  into: Uint8Array,
+  at: number,
+  dog: Watchdog,
+): Promise<number> {
+  let written = 0;
+  let idle = 0;
+  if (reader === undefined) return written;
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    yield value;
+    const next = await reader.read().catch((error: unknown) => {
+      const cut = new Error(`${named} stopped sending mid-body (${String(error)})`);
+      throw abortReason(dog.signal) ?? cut;
+    });
+    if (next.done) return written;
+    const chunk = next.value;
+    if (chunk.length === 0) {
+      idle += 1;
+      if (idle > IDLE_CHUNK_LIMIT) {
+        throw new Error(`${named} sent ${String(idle)} empty chunks in a row and no bytes`);
+      }
+      continue;
+    }
+    idle = 0;
+    dog.alive();
+    const room = into.length - at - written;
+    if (room <= 0) return written;
+    const kept = Math.min(chunk.length, room);
+    const taken = chunk.subarray(0, kept);
+    into.set(taken, at + written);
+    written += kept;
   }
+}
+
+function watchdog(url: string, stallMs: number | null, caller: AbortSignal | undefined): Watchdog {
+  if (stallMs === null && caller === undefined) {
+    return { signal: undefined, alive: () => {}, off: () => {} };
+  }
+  const link = linkedSignal(caller);
+  if (stallMs === null) return { signal: link.signal, alive: () => {}, off: link.unlink };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const alive = () => {
+    clearTimeout(timer);
+    const stall = () => {
+      const silent = new Error(`${url} sent nothing for ${String(stallMs)}ms`);
+      link.abort(silent);
+    };
+    timer = setTimeout(stall, stallMs);
+  };
+  alive();
+  const off = () => {
+    clearTimeout(timer);
+    link.unlink();
+  };
+  return { signal: link.signal, alive, off };
 }
 
 function whyInadmissible(parsed: URL): string | null {

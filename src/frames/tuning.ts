@@ -1,6 +1,5 @@
 import { givenSignal } from "../io/abort.js";
 import type { IndexFetch, Trip, WalkFetch } from "../io/source.js";
-import { MAX_CONCURRENCY } from "../io/source.js";
 import type { FrameOptions, FramePreset, FrameVia } from "./contract.js";
 
 export interface SettledFrameOptions {
@@ -40,6 +39,8 @@ type TuningByTrip = Record<Trip, FetchKnobs>;
 interface FetchKnobs extends Pick<IndexFetch, "gapBytes">, WalkFetch {}
 
 const DEFAULT_VIA: FrameVia = "both";
+
+const MAX_CONCURRENCY = 64;
 
 const FRAME_VIAS = new Set<FrameVia>(["both", "index", "walk"]);
 
