@@ -1,5 +1,6 @@
 import type { Watch } from "../io/abort.js";
 import type { WalkFetch } from "../io/source.js";
+import type { BlockFrame } from "../matroska/block.js";
 import { type WalkFrom, walkFrames } from "../matroska/walked.js";
 import type { ClaimsByNumber, TrackClaim } from "./claim.js";
 import type { Frame } from "./contract.js";
@@ -12,12 +13,13 @@ export async function* framesByWalk(
   knobs: WalkFetch,
   watch: Watch,
   from?: WalkFrom,
-): AsyncGenerator<Frame> {
+): AsyncGenerator<Frame[]> {
   const timeline = await file.timeline(watch.signal);
+  const onTimeline = (frame: BlockFrame) => {
+    const claim = claims.get(frame.trackNumber) as TrackClaim;
+    return frameOn(frame, claim.track.index, timeline);
+  };
   for await (const clusterFrames of walkFrames(file, claims, knobs, watch, from)) {
-    for (const frame of clusterFrames) {
-      const claim = claims.get(frame.trackNumber) as TrackClaim;
-      yield frameOn(frame, claim.track.index, timeline);
-    }
+    yield clusterFrames.map(onTimeline);
   }
 }

@@ -13,47 +13,21 @@ import { framesByWalk } from "./walked.js";
 export async function* framesOf(
   file: FrameFile,
   openedTracks: readonly OpenedTrack[],
-  {
-    via,
-    strict,
-    knobsForIndex,
-    knobsForWalk,
-    onProgress,
-    signal: callerSignal,
-  }: SettledFrameOptions,
+  settled: SettledFrameOptions,
   closing: AbortSignal,
 ): AsyncGenerator<Frame> {
-  const { signal, unlink } = linkedSignal(callerSignal, closing);
-  const watching = (finder: FrameFinder) =>
-    watchOver(signal, (doneBytes, totalBytes) => onProgress?.({ finder, doneBytes, totalBytes }));
+  const { signal, unlink } = linkedSignal(settled.signal, closing);
   try {
     stopIfAborted(signal);
     if (openedTracks.length === 0) return;
     const claims = claimsOf(openedTracks);
-    // The last cue whose frame the index handed over, past which a walk takes over.
-    let through: CuePosition | undefined;
-    if (via !== "walk") {
-      const watch = watching("index");
-      const groups = framesByIndex(file, claims, knobsForIndex, watch, strict);
-      for (
-        let next = await nextGroup(groups, via, signal);
-        next !== null;
-        next = await nextGroup(groups, via, signal)
-      ) {
-        if (next.done === true) return;
-        // Popped, so each frame is let go as it is handed over.
-        const pending = next.value.frames.reverse();
-        for (let frame = pending.pop(); frame !== undefined; frame = pending.pop()) {
-          stopIfAborted(signal);
-          yield frame;
-        }
-        through = next.value.through;
+    for await (const batch of batchesOf(file, claims, settled, signal)) {
+      // Popped, so each frame is let go as it is handed over.
+      const pending = batch.reverse();
+      for (let frame = pending.pop(); frame !== undefined; frame = pending.pop()) {
+        stopIfAborted(signal);
+        yield frame;
       }
-    }
-    const watch = watching("walk");
-    for await (const frame of framesByWalk(file, claims, knobsForWalk, watch, through)) {
-      stopIfAborted(signal);
-      yield frame;
     }
   } catch (error) {
     throw refusalOf(error, signal) ?? error;
@@ -63,6 +37,33 @@ export async function* framesOf(
 }
 
 const WALK_TAKES_OVER: ReadonlySet<RefusalCode> = new Set(["unreadable", "source-failed"]);
+
+async function* batchesOf(
+  file: FrameFile,
+  claims: ClaimsByNumber,
+  { via, strict, knobsForIndex, knobsForWalk, onProgress }: SettledFrameOptions,
+  signal: AbortSignal,
+): AsyncGenerator<Frame[]> {
+  const watching = (finder: FrameFinder) =>
+    watchOver(signal, (doneBytes, totalBytes) => onProgress?.({ finder, doneBytes, totalBytes }));
+  // The last cue whose frame the index handed over, past which a walk takes over.
+  let through: CuePosition | undefined;
+  if (via !== "walk") {
+    const watch = watching("index");
+    const groups = framesByIndex(file, claims, knobsForIndex, watch, strict);
+    for (
+      let next = await nextGroup(groups, via, signal);
+      next !== null;
+      next = await nextGroup(groups, via, signal)
+    ) {
+      if (next.done === true) return;
+      yield next.value.frames;
+      through = next.value.through;
+    }
+  }
+  const watch = watching("walk");
+  yield* framesByWalk(file, claims, knobsForWalk, watch, through);
+}
 
 async function nextGroup(
   groups: AsyncGenerator<IndexedGroup>,
