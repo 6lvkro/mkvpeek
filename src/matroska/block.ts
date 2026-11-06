@@ -27,17 +27,6 @@ export interface StoredFrame {
 
 export type BlockRefusal = "malformed" | "unreadable";
 
-interface BlockHead {
-  trackNumber: number;
-  relTicks: number;
-}
-
-interface BlockTrack {
-  trackNumber: number;
-  numberBytes: number;
-  cut: boolean;
-}
-
 export const BLOCK_PROBE_BYTES = 32;
 
 export const FRAME_IDS: ReadonlySet<number> = new Set([
@@ -65,30 +54,33 @@ export function* blockSteps(
     if (!E.covers(window, outer.body, probeBytes)) {
       window = yield { at: outer.body, length: probeBytes };
     }
-    let inner: Element | null = null;
+    const field = E.elementCursor();
+    let innerBody = -1;
+    let innerSize = 0;
     let pos = outer.body;
     while (pos < outer.next) {
       const need = E.headerNeed(pos, outer.next);
       if (!E.covers(window, pos, need)) {
         window = yield { at: pos, length: need };
       }
-      const field = E.readElement(window, pos);
-      if (!E.fits(field, outer.next)) return "malformed";
+      const fits = E.readElementInto(window, pos, field) && !field.open && field.next <= outer.next;
+      if (!fits) return "malformed";
       if (field.id === ID.blockGroup.BLOCK) {
-        inner = field;
+        innerBody = field.body;
+        innerSize = field.size;
       } else if (field.id === ID.blockGroup.BLOCK_DURATION) {
         if (E.uintFits(field.size)) {
           if (!E.covers(window, field.body, field.size)) {
             window = yield { at: field.body, length: field.size };
           }
-          durationTicks = E.readUint(window, field);
+          durationTicks = E.readUintAt(window, field.body, field.size);
         }
       }
       pos = field.next;
     }
-    if (inner === null) return "malformed";
-    body = inner.body;
-    size = inner.size;
+    if (innerBody < 0) return "malformed";
+    body = innerBody;
+    size = innerSize;
   }
   const headNeed = headBytes(size);
   if (!E.covers(window, body, headNeed)) {
@@ -96,10 +88,10 @@ export function* blockSteps(
   }
   const head = trackOfBlock(window, body, size);
   if (head === "undecodable") return "malformed";
-  const { trackNumber, numberBytes } = head;
+  const { trackNumber, numberBytes } = HEAD;
   const claim = claims.get(trackNumber);
   if (claim === undefined) return null;
-  if (head.cut) return "malformed";
+  if (head === "cut") return "malformed";
   const start = body + numberBytes - window.at;
   if (((window.bytes[start + 2] as number) & LACING_MASK) !== 0) return "unreadable";
   const payloadAt = body + numberBytes + TIME_AND_FLAGS_BYTES;
@@ -134,18 +126,36 @@ export async function undoneFrame(
   return { trackNumber, startTicks, durationTicks, payload };
 }
 
-export function heldBlockHead(window: Window, outer: Element): BlockHead | null {
-  let block = outer;
+export function relTicksIfTrack(
+  window: Window,
+  outer: E.ElementCursor,
+  trackNumber: number,
+): number | null {
+  let body = outer.body;
+  let size = outer.size;
   if (outer.id === ID.cluster.BLOCK_GROUP) {
-    const first = E.readElement(window, outer.body);
-    if (!E.fits(first, outer.next) || first.id !== ID.blockGroup.BLOCK) return null;
-    block = first;
+    const fits =
+      E.readElementInto(window, outer.body, INNER) && !INNER.open && INNER.next <= outer.next;
+    if (!fits || INNER.id !== ID.blockGroup.BLOCK) return null;
+    body = INNER.body;
+    size = INNER.size;
   }
-  if (!E.covers(window, block.body, headBytes(block.size))) return null;
-  const head = trackOfBlock(window, block.body, block.size);
-  if (head === "undecodable" || head.cut) return null;
-  const relTicks = relTicksAt(window.bytes, block.body + head.numberBytes - window.at);
-  return { trackNumber: head.trackNumber, relTicks };
+  const need = headBytes(size);
+  if (!E.covers(window, body, need) || trackOfBlock(window, body, size) !== "whole") return null;
+  if (HEAD.trackNumber !== trackNumber) return null;
+  return relTicksAt(window.bytes, body + HEAD.numberBytes - window.at);
+}
+
+/** Whether the window alone shows a SimpleBlock of a track not chosen, which blockSteps would answer null. */
+export function skipsUnclaimed(
+  window: Window,
+  el: E.ElementCursor,
+  claims: ReadonlyMap<number, FrameClaim>,
+): boolean {
+  if (el.id !== ID.cluster.SIMPLE_BLOCK) return false;
+  const need = headBytes(el.size);
+  if (!E.covers(window, el.body, need)) return false;
+  return trackOfBlock(window, el.body, el.size) !== "undecodable" && !claims.has(HEAD.trackNumber);
 }
 
 const TIME_AND_FLAGS_BYTES = 3;
@@ -156,6 +166,11 @@ const BLOCK_GROUP_PROBE_BYTES = 256;
 
 const LACING_MASK = 0x06;
 
+// What reads into these two is synchronous, so reusing them mixes no reads.
+const HEAD = { trackNumber: 0, numberBytes: 0 };
+
+const INNER = E.elementCursor();
+
 // On the browser bundle's path, so `Buffer.readInt16BE` is not available.
 const relTicksAt = (bytes: Uint8Array, start: number): number =>
   ((((bytes[start] as number) << 8) | (bytes[start + 1] as number)) << 16) >> 16;
@@ -163,14 +178,14 @@ const relTicksAt = (bytes: Uint8Array, start: number): number =>
 const headBytes = (size: number): number => Math.min(MAX_BLOCK_HEAD_BYTES, size);
 
 /**
- * The TrackNumber of a block whose headBytes(size) the window covers, and its width.
+ * Reads the TrackNumber of a block whose headBytes(size) the window covers, and its width, into HEAD.
  *
- * "undecodable" where the TrackNumber does not decode inside the block, `cut` where the block cannot hold its time and flags.
+ * "undecodable" where the TrackNumber does not decode inside the block, "cut" where the block cannot hold its time and flags.
  */
-function trackOfBlock(window: Window, body: number, size: number): BlockTrack | "undecodable" {
-  const trackNumber = E.readVint(window, body);
-  if (typeof trackNumber === "string" || trackNumber.length > size) return "undecodable";
-  const numberBytes = trackNumber.length;
-  const cut = numberBytes + TIME_AND_FLAGS_BYTES > size;
-  return { trackNumber: trackNumber.value, numberBytes, cut };
+function trackOfBlock(window: Window, body: number, size: number): "undecodable" | "cut" | "whole" {
+  const numberBytes = E.vintLengthAt(window, body);
+  if (numberBytes === 0 || numberBytes > size) return "undecodable";
+  HEAD.trackNumber = E.sizeVintAt(window, body, numberBytes);
+  HEAD.numberBytes = numberBytes;
+  return numberBytes + TIME_AND_FLAGS_BYTES > size ? "cut" : "whole";
 }

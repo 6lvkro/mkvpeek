@@ -6,7 +6,7 @@ import {
   blockSteps,
   FRAME_IDS,
   type FrameClaim,
-  heldBlockHead,
+  relTicksIfTrack,
   type StoredFrame,
 } from "./block.js";
 import { CLUSTER_PROBE_BYTES, readClusterTicks, readsAs } from "./chain.js";
@@ -108,12 +108,12 @@ export function locateByCue(
     const blockAt = clusterBody + relPos;
     // Both frame IDs are one byte long, so the byte a width lands on is the ID it would read.
     if (!FRAME_IDS.has(window.bytes[blockAt - window.at] as number)) continue;
-    const outer = E.readElement(window, blockAt);
-    if (!E.decoded(outer)) continue;
-    const blockHead = heldBlockHead(window, outer);
-    if (blockHead === null || blockHead.trackNumber !== trackNumber) continue;
+    if (!E.readElementInto(window, blockAt, OUTER) || OUTER.open) continue;
+    const relTicks = relTicksIfTrack(window, OUTER, trackNumber);
+    if (relTicks === null) continue;
     if (cued !== null) return null;
-    cued = { blockAt, outer, clusterBody, clusterTicks: ticks - blockHead.relTicks, window };
+    const outer = { id: OUTER.id, size: OUTER.size, body: OUTER.body, next: OUTER.next };
+    cued = { blockAt, outer, clusterBody, clusterTicks: ticks - relTicks, window };
   }
   return cued;
 }
@@ -134,6 +134,9 @@ const MAX_CLUSTER_HEADER_BYTES = CLUSTER_ID_BYTES + E.MAX_VINT_BYTES;
 const CUE_AHEAD_BYTES = 256;
 
 const CUE_RANGE_BYTES = MAX_CLUSTER_HEADER_BYTES + CUE_AHEAD_BYTES;
+
+// locateByCue is synchronous, so every cue reuses this cursor without mixing its reads.
+const OUTER = E.elementCursor();
 
 function clusterAt(windows: WindowIndex, clusterPos: number): LastCluster | null {
   const clusterHead = windows.find(clusterPos, CLUSTER_PROBE_BYTES);

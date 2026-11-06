@@ -27,11 +27,6 @@ export interface Window {
   readonly fileSize: number;
 }
 
-interface Vint {
-  value: number;
-  length: number;
-}
-
 type Unread = "unread";
 
 /**
@@ -68,16 +63,13 @@ export const elementCursor = (): ElementCursor => ({
   open: false,
 });
 
+export const vintLengthAt = (window: Window, at: number): number => heldVintLength(window, at);
+
+export const sizeVintAt = (window: Window, at: number, length: number): number =>
+  vintValue(window.bytes, at - window.at, length, "size");
+
 export function throwUnlessGrammar(error: unknown): void {
   if (!isGrammarError(error)) throw error;
-}
-
-export function readVint(window: Window, at: number): Vint | Unread {
-  const length = heldVintLength(window, at);
-  if (length === 0) return "unread";
-  const start = at - window.at;
-  const value = vintValue(window.bytes, start, length, "size");
-  return { value, length };
 }
 
 export function* children(window: Window, body: number, size: number): Generator<Element> {

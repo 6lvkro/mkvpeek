@@ -13,6 +13,7 @@ import {
   FRAME_IDS,
   type FrameClaim,
   plainFrame,
+  skipsUnclaimed,
   undoneFrame,
 } from "./block.js";
 import { CLUSTER_PROBE_BYTES, hopTopLevel, readClusterTicks, type SegmentPass } from "./chain.js";
@@ -276,18 +277,21 @@ async function walkSpan(
     }
     return window;
   };
+  const cursor = E.elementCursor();
   while (pos < span.end) {
     const need = Math.min(BLOCK_PROBE_BYTES, span.end - pos);
     const window = E.covers(carried, pos, need) ? carried : await supply(pos, need);
-    const el = E.readElement(window, pos);
-    if (typeof el === "string") return "malformed";
-    if (!CLUSTER_CHILD_IDS.has(el.id)) {
-      if ("open" in span.el && SEGMENT_CHILD_IDS.has(el.id)) return { frames, end: pos, carried };
+    if (!E.readElementInto(window, pos, cursor)) return "malformed";
+    const { id, next } = cursor;
+    if (!CLUSTER_CHILD_IDS.has(id)) {
+      if ("open" in span.el && SEGMENT_CHILD_IDS.has(id)) return { frames, end: pos, carried };
       // An element no cluster holds. A broken spec and an element this reader does not know are not told apart.
       return "unreadable";
     }
-    if (!E.fits(el, span.end)) return "malformed";
-    if (FRAME_IDS.has(el.id) && pos - span.el.body > handedThrough) {
+    if (cursor.open || next > span.end) return "malformed";
+    const handed = FRAME_IDS.has(id) && pos - span.el.body > handedThrough;
+    if (handed && !skipsUnclaimed(window, cursor, claims)) {
+      const el = { id, size: cursor.size, body: cursor.body, next };
       const steps = blockSteps(el, clusterTicks, window, claims);
       let step = steps.next();
       while (step.done !== true) {
@@ -303,7 +307,7 @@ async function walkSpan(
         frames.push(frame);
       }
     }
-    pos = el.next;
+    pos = next;
   }
   return { frames, end: span.end, carried };
 }
