@@ -3,9 +3,9 @@ import * as E from "../ebml.js";
 import type { Range } from "../io/source.js";
 import type { WindowIndex } from "../io/windows.js";
 import {
-  blockSteps,
   FRAME_IDS,
   type FrameClaim,
+  readBlockFrame,
   relTicksIfTrack,
   type StoredFrame,
 } from "./block.js";
@@ -27,14 +27,7 @@ export function readLocatedFrame(
   trackNumber: number,
   claims: ReadonlyMap<number, FrameClaim>,
 ): StoredFrame | null {
-  const steps = blockSteps(outer, clusterTicks, window, claims);
-  let step = steps.next();
-  while (step.done !== true) {
-    const found = windows.find(step.value.at, step.value.length);
-    if (found === null) return null;
-    step = steps.next(found);
-  }
-  const stored = step.value;
+  const stored = readBlockFrame(outer, clusterTicks, window, claims, windows);
   // A cue must point to a block of its own track, so a block of another track leads nowhere.
   return typeof stored === "string" || stored?.trackNumber !== trackNumber ? null : stored;
 }

@@ -1,6 +1,5 @@
 import type { Element, Window } from "../ebml.js";
 import * as E from "../ebml.js";
-import type { Range } from "../io/source.js";
 import type { Undo } from "./encoding.js";
 import { ID } from "./ids.js";
 
@@ -27,6 +26,37 @@ export interface StoredFrame {
 
 export type BlockRefusal = "malformed" | "unreadable";
 
+export interface WindowFinder {
+  find(at: number, length: number): Window | null;
+}
+
+/**
+ * The child to read next and what has been read so far, for a BlockGroup read in several calls.
+ *
+ * A readBlockFrame that stopped "short" for want of a window picks up there when handed the same scan.
+ */
+export class GroupScan {
+  next = -1;
+  blockBody = -1;
+  blockSize = 0;
+  durationTicks: number | null = null;
+
+  restart(): this {
+    this.next = -1;
+    this.blockBody = -1;
+    this.blockSize = 0;
+    this.durationTicks = null;
+    return this;
+  }
+
+  mayAsk(window: Window): boolean {
+    const reach = E.reachOf(window);
+    if (reach > this.next) return true;
+    const blockEnd = this.blockBody + this.blockSize;
+    return this.blockBody >= 0 && window.at < blockEnd && reach > this.blockBody;
+  }
+}
+
 export const BLOCK_PROBE_BYTES = 32;
 
 export const FRAME_IDS: ReadonlySet<number> = new Set([
@@ -37,55 +67,55 @@ export const FRAME_IDS: ReadonlySet<number> = new Set([
 /**
  * One frame of a block element as stored, null for a track `claims` does not hold, and why where it is not read.
  *
- * Each range it yields must be answered with a window that holds it.
+ * It asks `finder` for a range the held window does not cover, and answers "short" where `finder` has none.
  */
-export function* blockSteps(
+export function readBlockFrame(
   outer: Element,
   clusterTicks: number,
   held: Window,
   claims: ReadonlyMap<number, FrameClaim>,
-): Generator<Range, StoredFrame | null | BlockRefusal, Window> {
-  let window = held;
+  finder: WindowFinder,
+  scan: GroupScan = ONE_PASS.restart(),
+): StoredFrame | null | BlockRefusal | "short" {
+  let window: Window | null = held;
   let body = outer.body;
   let size = outer.size;
   let durationTicks: number | null = null;
   if (outer.id === ID.cluster.BLOCK_GROUP) {
-    const probeBytes = Math.min(outer.size, BLOCK_GROUP_PROBE_BYTES);
-    if (!E.covers(window, outer.body, probeBytes)) {
-      window = yield { at: outer.body, length: probeBytes };
+    if (scan.next < 0) {
+      const probeBytes = Math.min(outer.size, BLOCK_GROUP_PROBE_BYTES);
+      window = covering(window, outer.body, probeBytes, finder);
+      if (window === null) return "short";
+      scan.next = outer.body;
     }
     const field = E.elementCursor();
-    let innerBody = -1;
-    let innerSize = 0;
-    let pos = outer.body;
-    while (pos < outer.next) {
-      const need = E.headerNeed(pos, outer.next);
-      if (!E.covers(window, pos, need)) {
-        window = yield { at: pos, length: need };
-      }
-      const fits = E.readElementInto(window, pos, field) && !field.open && field.next <= outer.next;
+    while (scan.next < outer.next) {
+      const need = E.headerNeed(scan.next, outer.next);
+      window = covering(window, scan.next, need, finder);
+      if (window === null) return "short";
+      const fits =
+        E.readElementInto(window, scan.next, field) && !field.open && field.next <= outer.next;
       if (!fits) return "malformed";
       if (field.id === ID.blockGroup.BLOCK) {
-        innerBody = field.body;
-        innerSize = field.size;
+        scan.blockBody = field.body;
+        scan.blockSize = field.size;
       } else if (field.id === ID.blockGroup.BLOCK_DURATION) {
         if (E.uintFits(field.size)) {
-          if (!E.covers(window, field.body, field.size)) {
-            window = yield { at: field.body, length: field.size };
-          }
-          durationTicks = E.readUintAt(window, field.body, field.size);
+          window = covering(window, field.body, field.size, finder);
+          if (window === null) return "short";
+          scan.durationTicks = E.readUintAt(window, field.body, field.size);
         }
       }
-      pos = field.next;
+      scan.next = field.next;
     }
-    if (innerBody < 0) return "malformed";
-    body = innerBody;
-    size = innerSize;
+    if (scan.blockBody < 0) return "malformed";
+    body = scan.blockBody;
+    size = scan.blockSize;
+    durationTicks = scan.durationTicks;
   }
   const headNeed = headBytes(size);
-  if (!E.covers(window, body, headNeed)) {
-    window = yield { at: body, length: headNeed };
-  }
+  window = covering(window, body, headNeed, finder);
+  if (window === null) return "short";
   const head = trackOfBlock(window, body, size);
   if (head === "undecodable") return "malformed";
   const { trackNumber, numberBytes } = HEAD;
@@ -96,10 +126,9 @@ export function* blockSteps(
   if (((window.bytes[start + 2] as number) & LACING_MASK) !== 0) return "unreadable";
   const payloadAt = body + numberBytes + TIME_AND_FLAGS_BYTES;
   const payloadSize = size - (numberBytes + TIME_AND_FLAGS_BYTES);
-  const covering = E.covers(window, payloadAt, payloadSize)
-    ? window
-    : yield { at: payloadAt, length: payloadSize };
-  const stored = E.readBytes(covering, payloadAt, payloadSize);
+  const payload = covering(window, payloadAt, payloadSize, finder);
+  if (payload === null) return "short";
+  const stored = E.readBytes(payload, payloadAt, payloadSize);
   const startTicks = clusterTicks + relTicksAt(window.bytes, start);
   return { trackNumber, startTicks, durationTicks, stored, undo: claim.undo };
 }
@@ -146,7 +175,7 @@ export function relTicksIfTrack(
   return relTicksAt(window.bytes, body + HEAD.numberBytes - window.at);
 }
 
-/** Whether the window alone shows a SimpleBlock of a track not chosen, which blockSteps would answer null. */
+/** Whether the window alone shows a SimpleBlock of a track not chosen, which readBlockFrame would answer null. */
 export function skipsUnclaimed(
   window: Window,
   el: E.ElementCursor,
@@ -166,10 +195,12 @@ const BLOCK_GROUP_PROBE_BYTES = 256;
 
 const LACING_MASK = 0x06;
 
-// What reads into these two is synchronous, so reusing them mixes no reads.
+// What reads into these three is synchronous, so reusing them mixes no reads.
 const HEAD = { trackNumber: 0, numberBytes: 0 };
 
 const INNER = E.elementCursor();
+
+const ONE_PASS = new GroupScan();
 
 // On the browser bundle's path, so `Buffer.readInt16BE` is not available.
 const relTicksAt = (bytes: Uint8Array, start: number): number =>
@@ -188,4 +219,8 @@ function trackOfBlock(window: Window, body: number, size: number): "undecodable"
   HEAD.trackNumber = E.sizeVintAt(window, body, numberBytes);
   HEAD.numberBytes = numberBytes;
   return numberBytes + TIME_AND_FLAGS_BYTES > size ? "cut" : "whole";
+}
+
+function covering(window: Window, at: number, length: number, finder: WindowFinder): Window | null {
+  return E.covers(window, at, length) ? window : finder.find(at, length);
 }

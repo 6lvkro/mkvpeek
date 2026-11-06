@@ -2,19 +2,21 @@ import type { Element, OpenElement, Window } from "../ebml.js";
 import * as E from "../ebml.js";
 import { linkedSignal, stopIfAborted, type Watch } from "../io/abort.js";
 import { HaltableQueue, joinOrAbort } from "../io/lanes.js";
-import type { SizedSource, WalkFetch } from "../io/source.js";
+import type { Range, SizedSource, WalkFetch } from "../io/source.js";
 import { heldOrRead, holds, type Loaned, type WindowPool, windowPool } from "../io/windows.js";
 import { RefusalError } from "../vocabulary.js";
 import {
   BLOCK_PROBE_BYTES,
   type BlockFrame,
   type BlockRefusal,
-  blockSteps,
   FRAME_IDS,
   type FrameClaim,
+  GroupScan,
   plainFrame,
+  readBlockFrame,
   skipsUnclaimed,
   undoneFrame,
+  type WindowFinder,
 } from "./block.js";
 import { CLUSTER_PROBE_BYTES, hopTopLevel, readClusterTicks, type SegmentPass } from "./chain.js";
 import type { CuePosition } from "./cues.js";
@@ -217,6 +219,31 @@ interface Loans {
   ledger: Set<Loaned>;
 }
 
+/** Hands back the windows bought for one block by range. Those a resumed read can no longer ask for are dropped. */
+class BoughtWindows implements WindowFinder {
+  readonly missed: Range = { at: 0, length: 0 };
+  #bought: Window[] = [];
+
+  find(at: number, length: number): Window | null {
+    for (let i = this.#bought.length - 1; i >= 0; i -= 1) {
+      const window = this.#bought[i] as Window;
+      if (E.covers(window, at, length)) return window;
+    }
+    this.missed.at = at;
+    this.missed.length = length;
+    return null;
+  }
+
+  keep(window: Window, scan: GroupScan): void {
+    this.#bought = this.#bought.filter((held) => scan.mayAsk(held));
+    this.#bought.push(window);
+  }
+
+  clear(): void {
+    this.#bought = [];
+  }
+}
+
 const CLUSTER_CHILD_IDS = new Set<number>([
   ...Object.values(ID.cluster),
   ...Object.values(ID.global),
@@ -277,6 +304,8 @@ async function walkSpan(
     }
     return window;
   };
+  const bought = new BoughtWindows();
+  const scan = new GroupScan();
   const cursor = E.elementCursor();
   while (pos < span.end) {
     const need = Math.min(BLOCK_PROBE_BYTES, span.end - pos);
@@ -292,13 +321,15 @@ async function walkSpan(
     const handed = FRAME_IDS.has(id) && pos - span.el.body > handedThrough;
     if (handed && !skipsUnclaimed(window, cursor, claims)) {
       const el = { id, size: cursor.size, body: cursor.body, next };
-      const steps = blockSteps(el, clusterTicks, window, claims);
-      let step = steps.next();
-      while (step.done !== true) {
-        const bought = await supply(step.value.at, step.value.length);
-        step = steps.next(bought);
+      bought.clear();
+      scan.restart();
+      let stored = readBlockFrame(el, clusterTicks, window, claims, bought, scan);
+      while (stored === "short") {
+        const { at, length } = bought.missed;
+        const supplied = await supply(at, length);
+        bought.keep(supplied, scan);
+        stored = readBlockFrame(el, clusterTicks, window, claims, bought, scan);
       }
-      const stored = step.value;
       if (typeof stored === "string") return stored;
       if (stored !== null) {
         const frame =
