@@ -2,7 +2,7 @@ import { isGrammarError, type Window } from "../ebml.js";
 import { stopIfAborted, type Watch } from "../io/abort.js";
 import { gathered } from "../io/lanes.js";
 import { available, type IndexFetch, type Range, type SizedSource } from "../io/source.js";
-import { coalesceAcross, fetchSpans, WindowIndex } from "../io/windows.js";
+import { coalesceAcross, fetchSpans, StoneIndex, WindowIndex } from "../io/windows.js";
 import { plainFrame, undoneFrame } from "../matroska/block.js";
 import { CLUSTER_PROBE_BYTES } from "../matroska/chain.js";
 import type { CueIndex, CuePosition } from "../matroska/cues.js";
@@ -128,6 +128,8 @@ const FRAMES_PER_ROUND = 4096;
 /** What a group may buy past its round's probes, as a round of large frames would otherwise hold them all. */
 const GROUP_BYTES = 2 * 1024 ** 2;
 
+const NO_STONES = new StoneIndex([]);
+
 /** A range that crosses the head's edge is kept whole, since split there its element would lie in no window. */
 const unheld = (ranges: readonly Range[], head: Window): Range[] =>
   ranges.flatMap((range) => {
@@ -153,7 +155,7 @@ function planFrames(byTrack: CueIndex, claims: ClaimsByNumber, strict: boolean):
 }
 
 /** The blocks the other readable tracks' cues name, which may close the holes between this read's. */
-function stonesOf(file: FrameFile, byTrack: CueIndex, claims: ClaimsByNumber): Range[] {
+function stonesOf(file: FrameFile, byTrack: CueIndex, claims: ClaimsByNumber): StoneIndex {
   const chosen = new Set(claims.keys());
   const givesStones = (openedTrack: OpenedTrack) =>
     !chosen.has(openedTrack.track.number) && claimFor(openedTrack) !== null;
@@ -163,7 +165,8 @@ function stonesOf(file: FrameFile, byTrack: CueIndex, claims: ClaimsByNumber): R
     .filter(([number]) => numbers.has(number))
     .flatMap(([, positions]) => positions);
   const blocks = planBlockRanges(cues);
-  return unheld(blocks, file.head);
+  const stones = unheld(blocks, file.head);
+  return new StoneIndex(stones);
 }
 
 function clusterStartsOf(byTrack: CueIndex): number[] {
@@ -362,7 +365,7 @@ async function buy(
   signal: AbortSignal,
 ): Promise<FetchedGroup> {
   const toBuy = unheld(ranges, head);
-  const extra = coalesceAcross(toBuy, [], knobs);
+  const extra = coalesceAcross(toBuy, NO_STONES, knobs);
   const fetched = await fetchSpans(sized, extra, knobs.concurrency, signal);
   return { windows: new WindowIndex(fetched, undefined, under), unplannedBytes: bytesOf(extra) };
 }

@@ -63,6 +63,20 @@ export class WindowIndex {
   }
 }
 
+export class StoneIndex {
+  readonly #sorted: readonly Range[];
+
+  constructor(stones: readonly Range[]) {
+    this.#sorted = [...stones].sort(byAt);
+  }
+
+  within(from: number, to: number): readonly Range[] {
+    const low = firstAtOrAfter(this.#sorted, from);
+    const high = firstAtOrAfter(this.#sorted, to + 1);
+    return this.#sorted.slice(low, high);
+  }
+}
+
 export async function heldOrRead(
   source: Source,
   held: Window,
@@ -107,25 +121,29 @@ export async function fetchSpans(
 /** The spans that read every wanted range, letting a stone close the hole between two of them. */
 export function coalesceAcross(
   wanted: readonly Range[],
-  stones: readonly Range[],
+  stones: StoneIndex,
   knobs: Pick<IndexFetch, "gapBytes">,
 ): Range[] {
   const from = wanted.reduce((least, range) => Math.min(least, range.at), Number.POSITIVE_INFINITY);
   const furthest = (most: number, range: Range) => Math.max(most, range.at + range.length);
   const to = wanted.reduce(furthest, Number.NEGATIVE_INFINITY) + knobs.gapBytes;
-  const near = stones.filter((stone) => stone.at >= from && stone.at <= to);
-  const marked: MarkedRange[] = [
-    ...wanted.map((range) => ({ range, isWanted: true })),
-    ...near.map((range) => ({ range, isWanted: false })),
-  ].sort((a, b) => a.range.at - b.range.at);
+  const near = stones.within(from, to);
+  const wantedByAt = [...wanted].sort(byAt);
+  const marked = mergedByAt(wantedByAt, near);
   const spans: Range[] = [];
   for (const group of coalesced(marked, knobs.gapBytes)) {
     const first = group.findIndex(({ isWanted }) => isWanted);
     if (first < 0) continue;
-    const lastWanted = group.map(({ isWanted }) => isWanted).lastIndexOf(true);
+    let lastWanted = group.length - 1;
+    while (!(group[lastWanted] as MarkedRange).isWanted) {
+      lastWanted -= 1;
+    }
     const lastAt = (group[lastWanted] as MarkedRange).range.at;
-    const keptEnd = group.map(({ range }) => range.at <= lastAt).lastIndexOf(true) + 2;
-    const kept = group.slice(first, keptEnd);
+    let lastBefore = group.length - 1;
+    while ((group[lastBefore] as MarkedRange).range.at > lastAt) {
+      lastBefore -= 1;
+    }
+    const kept = group.slice(first, lastBefore + 2);
     const at = (kept[0] as MarkedRange).range.at;
     const through = kept.reduce((most, { range }) => furthest(most, range), at);
     spans.push({ at, length: through - at });
@@ -174,6 +192,40 @@ interface MarkedRange {
 }
 
 const MAX_SPAN_BYTES = 4 * 1024 ** 2;
+
+const byAt = (a: Range, b: Range): number => a.at - b.at;
+
+function firstAtOrAfter(sorted: readonly Range[], at: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((sorted[mid] as Range).at < at) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
+function mergedByAt(wanted: readonly Range[], stones: readonly Range[]): MarkedRange[] {
+  const marked: MarkedRange[] = [];
+  let w = 0;
+  let s = 0;
+  while (w < wanted.length || s < stones.length) {
+    const range = wanted[w];
+    const stone = stones[s];
+    if (range !== undefined && (stone === undefined || range.at <= stone.at)) {
+      marked.push({ range, isWanted: true });
+      w += 1;
+    } else {
+      marked.push({ range: stone as Range, isWanted: false });
+      s += 1;
+    }
+  }
+  return marked;
+}
 
 function coalesced(sorted: readonly MarkedRange[], gapBytes: number): MarkedRange[][] {
   const groups: MarkedRange[][] = [];
