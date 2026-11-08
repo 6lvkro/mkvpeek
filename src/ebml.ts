@@ -43,6 +43,9 @@ export const headerNeed = (at: number, end: number): number =>
 export const fits = (el: Element | OpenElement | Unread, end: number): el is Element =>
   decoded(el) && el.next <= end;
 
+export const fitsInto = (window: Window, at: number, end: number, out: ElementCursor): boolean =>
+  readElementInto(window, at, out) && !out.open && out.next <= end;
+
 export const decoded = (el: Element | OpenElement | Unread): el is Element =>
   typeof el !== "string" && !("open" in el);
 

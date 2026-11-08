@@ -28,8 +28,7 @@ function parseCues(window: Window, cues: Element, segment: Segment): CueIndex {
   // Every subtitle frame has a cue point, so each head is read into one cursor rather than an object per element.
   const cursor = E.elementCursor();
   const readElementHeader = (at: number, end: number) => {
-    const read = E.readElementInto(window, at, cursor);
-    if (!read || cursor.open || cursor.next > end) throw new E.GrammarError();
+    if (!E.fitsInto(window, at, end, cursor)) throw new E.GrammarError();
   };
   const cursorUint = () => E.readUintAt(window, cursor.body, cursor.next - cursor.body);
   const pointTicks = (body: number, next: number) => {

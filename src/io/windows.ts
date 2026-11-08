@@ -153,7 +153,7 @@ export function coalesceAcross(
 
 export function windowPool(slotBytes: number, slots: number): WindowPool {
   const free: Uint8Array[] = [];
-  let unbuilt = slotBytes >= LARGE_READ_BYTES ? slots : 0;
+  let unbuilt = slots;
   const lease = (slot: Uint8Array, width: number): Lease => {
     const release = () => {
       free.push(slot);

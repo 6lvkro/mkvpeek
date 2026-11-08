@@ -93,9 +93,7 @@ export function readBlockFrame(
       const need = E.headerNeed(scan.next, outer.next);
       window = covering(window, scan.next, need, finder);
       if (window === null) return "short";
-      const fits =
-        E.readElementInto(window, scan.next, field) && !field.open && field.next <= outer.next;
-      if (!fits) return "malformed";
+      if (!E.fitsInto(window, scan.next, outer.next, field)) return "malformed";
       if (field.id === ID.blockGroup.BLOCK) {
         scan.blockBody = field.body;
         scan.blockSize = field.size;
@@ -163,8 +161,7 @@ export function relTicksIfTrack(
   let body = outer.body;
   let size = outer.size;
   if (outer.id === ID.cluster.BLOCK_GROUP) {
-    const fits =
-      E.readElementInto(window, outer.body, INNER) && !INNER.open && INNER.next <= outer.next;
+    const fits = E.fitsInto(window, outer.body, outer.next, INNER);
     if (!fits || INNER.id !== ID.blockGroup.BLOCK) return null;
     body = INNER.body;
     size = INNER.size;
