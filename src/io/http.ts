@@ -31,7 +31,8 @@ export const namesAuthority = (target: string): boolean => /^[a-z][a-z0-9+.-]*:\
 /**
  * An HTTP source over `fetch`.
  *
- * A server that answers a Range request with anything but 206 fails the read as `source-failed`.
+ * A server that answers a Range request with anything but 206 fails the read as `source-failed`;
+ * an answer that the file is empty is `not-matroska`.
  */
 export async function urlSource(
   url: string,
@@ -52,6 +53,10 @@ export async function urlSource(
 
   const acceptedTotal = (response: Response, from: number): number => {
     if (response.status !== 206) {
+      // On an empty file, nginx, Apache and lighttpd answer 200 and a length of 0, and the standard says 416 and `*/0`.
+      if (response.status === 200 && response.headers.get("content-length") === "0") return 0;
+      const unsatisfied = response.headers.get("content-range") ?? "";
+      if (response.status === 416 && /^bytes\s+\*\/0\s*$/.test(unsatisfied)) return 0;
       throw new Error(
         `${url} answered HTTP ${String(response.status)} to a Range request; this reader needs a server that serves ranges`,
       );
