@@ -51,12 +51,10 @@ export async function* walkFrames(
   // The hop takes one of the reads; with none to spare for a lane, it walks what it finds.
   const laneCount = knobs.concurrency - 1;
   const ahead = Math.max(1, laneCount) * CLUSTERS_AHEAD_PER_LANE;
-  const walked = new Map<number, BlockFrame[]>();
+  const outcomes = new Map<number, Ordered>();
   let doneBytes = startBytes;
   let foundCount = 0;
   let handedCount = 0;
-  // Refusals kept in cluster order, as the frames handed over stop at the first refusal, whose reason is the one that stays.
-  const refusals: (BlockRefusal | undefined)[] = [];
   let parked: Array<() => void> = [];
   const wake = () => {
     for (const resolve of parked) resolve();
@@ -74,6 +72,11 @@ export async function* walkFrames(
     }
     return !queue.halted;
   };
+  const fail = (index: number, failed: unknown) => {
+    stopIfAborted(signal);
+    wake();
+    outcomes.set(index, { failed });
+  };
   const record = (
     index: number,
     span: ClusterSpan,
@@ -82,17 +85,23 @@ export async function* walkFrames(
     stopIfAborted(signal);
     wake();
     if (typeof outcome === "string") {
-      refusals[index] = outcome;
+      outcomes.set(index, outcome);
       return false;
     }
-    walked.set(index, outcome.frames);
+    outcomes.set(index, outcome.frames);
     doneBytes += outcome.end - span.at;
     watch.onProgress(doneBytes, fileSize);
     return true;
   };
 
   const walkAndRecord = async (item: HoppedCluster) => {
-    const outcome = await walkCluster(walk, item.span, pool, item.window);
+    const outcome = await walkCluster(walk, item.span, pool, item.window).catch(
+      (error: unknown) => {
+        fail(item.index, error);
+        return null;
+      },
+    );
+    if (outcome === null) return false;
     const kept = record(item.index, item.span, outcome);
     if (kept) outcome.carried.release?.();
     return kept;
@@ -124,21 +133,20 @@ export async function* walkFrames(
           if (!(await admitted(foundCount))) return;
         }
         if (openCluster === null) break;
-        const outcome = await walkCluster(walk, openCluster.span, pool, seed ?? openCluster.window);
-        if (!record(openCluster.index, openCluster.span, outcome)) {
-          queue.halt();
-          return;
-        }
+        const { index, span, window } = openCluster;
+        const outcome = await walkCluster(walk, span, pool, seed ?? window).catch(
+          (error: unknown) => {
+            fail(index, error);
+            return null;
+          },
+        );
+        if (outcome === null || !record(index, span, outcome)) return;
         if (seed !== undefined && outcome.carried !== seed) seed.release?.();
         seed = outcome.carried;
         pos = outcome.end;
       }
     } catch (error) {
-      // Only grammar is swallowed;
-      // swallowing a source failure too would make it a verdict on the container.
-      queue.halt();
-      E.throwUnlessGrammar(error);
-      refusals[foundCount] = "malformed";
+      fail(foundCount, error);
     } finally {
       queue.close();
       seed?.release?.();
@@ -163,20 +171,20 @@ export async function* walkFrames(
   );
   try {
     for (;;) {
-      const frames = walked.get(handedCount);
-      if (frames !== undefined) {
-        walked.delete(handedCount);
+      const outcome = outcomes.get(handedCount);
+      if (outcome !== undefined) {
+        if (typeof outcome === "string") throw new RefusalError(outcome);
+        if (!Array.isArray(outcome)) throw outcome.failed;
+        outcomes.delete(handedCount);
         handedCount += 1;
         wake();
-        if (frames.length > 0) yield frames;
+        if (outcome.length > 0) yield outcome;
         continue;
       }
       if (finished) break;
       await park();
     }
     if (failures.length > 0) throw failures[0];
-    const refusal = refusals.find((code) => code !== undefined);
-    if (refusal !== undefined) throw new RefusalError(refusal);
     watch.onProgress(fileSize, fileSize);
   } finally {
     ended.abort();
@@ -194,6 +202,8 @@ interface WalkInvariants {
 }
 
 type WalkedCluster = (SweptFrames & { carried: Loaned }) | BlockRefusal;
+
+type Ordered = BlockFrame[] | BlockRefusal | { failed: unknown };
 
 interface SweptFrames {
   frames: BlockFrame[];
