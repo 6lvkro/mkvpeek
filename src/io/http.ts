@@ -38,9 +38,11 @@ export async function urlSource(
   url: string,
   options: UrlOptions = {},
 ): Promise<Source & AsyncDisposal> {
+  const admitted = admittedUrl(url);
+  const named = withoutSecrets(admitted);
   const send = options.fetch ?? globalThis.fetch;
   const headers = withoutHeaders(options.headers ?? {}, TRANSPORT_OWNED_HEADERS);
-  const start: Hop = { url: admittedUrl(url), headers };
+  const start: Hop = { url: admitted, headers };
   const { stallMs } = options;
   const effectiveStallMs =
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
@@ -58,25 +60,25 @@ export async function urlSource(
       const unsatisfied = response.headers.get("content-range") ?? "";
       if (response.status === 416 && /^bytes\s+\*\/0\s*$/.test(unsatisfied)) return 0;
       throw new Error(
-        `${url} answered HTTP ${String(response.status)} to a Range request; this reader needs a server that serves ranges`,
+        `${named} answered HTTP ${String(response.status)} to a Range request; this reader needs a server that serves ranges`,
       );
     }
     const encoding = response.headers.get("content-encoding");
     if (encoding !== null && encoding.trim().toLowerCase() !== "identity") {
       const refused = new Error(
-        `${url} answered a range in another encoding, and this reader asked for identity`,
+        `${named} answered a range in another encoding, and this reader asked for identity`,
       );
       throw Object.assign(refused, { encoding });
     }
     const stated = response.headers.get("content-range") ?? "";
     const contentRange = /^bytes\s+(\d+)-\d+\/(\d+)\s*$/.exec(stated);
     if (contentRange === null) {
-      throw new Error(`${url} did not state a total length in Content-Range`);
+      throw new Error(`${named} did not state a total length in Content-Range`);
     }
     const answered = Number(contentRange[1]);
     if (answered !== from) {
       throw new Error(
-        `${url} answered a range from ${String(answered)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
+        `${named} answered a range from ${String(answered)} for one asked from ${String(from)}; this reader needs the bytes it asked for`,
       );
     }
     return Number(contentRange[2]);
@@ -90,7 +92,7 @@ export async function urlSource(
     at: number,
     caller: AbortSignal | undefined,
   ) => {
-    const dog = watchdog(url, effectiveStallMs, caller);
+    const dog = watchdog(named, effectiveStallMs, caller);
     try {
       const sent = new Headers(hop.headers);
       const range = `bytes=${String(from)}-${String(to)}`;
@@ -102,7 +104,7 @@ export async function urlSource(
       try {
         const total = acceptedTotal(response, from);
         if (total === 0) return { landed: 0, total };
-        const landed = await bodyInto(url, reader, into, at, dog);
+        const landed = await bodyInto(named, reader, into, at, dog);
         const reached = response.redirected ? URL.parse(response.url) : null;
         if (hop === start && options.fetch === undefined && reached !== null) {
           landing = fetchLanding(start, reached);
@@ -162,13 +164,13 @@ export async function urlSource(
     for (let rounds = 1; written < bounded; rounds += 1) {
       if (rounds > MAX_RESPONSES_PER_READ) {
         throw new Error(
-          `${url} dribbled ${String(written)} bytes over ${String(MAX_RESPONSES_PER_READ)} responses for one read; this reader does not pay a request per byte`,
+          `${named} dribbled ${String(written)} bytes over ${String(MAX_RESPONSES_PER_READ)} responses for one read; this reader does not pay a request per byte`,
         );
       }
       const from = at + written;
       const { landed } = await exchange(from, at + bounded - 1, out, written, caller);
       if (landed === 0) {
-        throw new Error(`${url} answered a range from ${String(from)} with no bytes in it`);
+        throw new Error(`${named} answered a range from ${String(from)} with no bytes in it`);
       }
       written += landed;
     }
@@ -234,11 +236,16 @@ const { setImmediate: nextTurn } = globalThis as {
   setImmediate?: (callback: (value: unknown) => void) => unknown;
 };
 
+const withoutSecrets = (url: URL): string => `${url.protocol}//${url.host}`;
+
 function admittedUrl(url: string): URL {
   const parsed = URL.parse(url);
-  if (parsed === null) throw new Error(`${url} is not a URL`);
-  const why = whyInadmissible(parsed);
-  if (why !== null) throw new Error(`${url} ${why}`);
+  if (parsed === null) throw new Error("the target is not a URL");
+  const credentialed = whyCredentialed(parsed);
+  if (credentialed !== null) throw new Error(`${withoutSecrets(parsed)} ${credentialed}`);
+  if (!speaksHttp(parsed)) {
+    throw new Error(`the target names ${parsed.protocol}, and this reader speaks http(s)`);
+  }
   return parsed;
 }
 
@@ -321,13 +328,6 @@ function watchdog(url: string, stallMs: number | null, caller: AbortSignal | und
     link.unlink();
   };
   return { signal: link.signal, alive, off };
-}
-
-function whyInadmissible(parsed: URL): string | null {
-  const why = whyCredentialed(parsed);
-  if (why !== null) return why;
-  if (!speaksHttp(parsed)) return `names ${parsed.protocol}, and this reader speaks http(s)`;
-  return null;
 }
 
 function speaksHttp(parsed: URL): boolean {
