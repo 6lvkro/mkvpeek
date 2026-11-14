@@ -185,9 +185,11 @@ async function* byRound(
 ): AsyncGenerator<IndexedGroup> {
   let doneBytes = headBytes;
   let priceBytes = totalBytes;
+  let blocksEnd = 0;
   for (const round of rounds) {
     stopIfAborted(signal);
     const probed = await probeRound(invariants, round, signal);
+    blocksEnd = disjointEnd(probed.located, blocksEnd);
     doneBytes += probed.unplannedBytes;
     priceBytes += probed.unplannedBytes;
     for (const group of groupsOf(probed.tails, GROUP_BYTES)) {
@@ -207,6 +209,17 @@ async function* byRound(
       yield { frames: groupFrames, through: last.cue };
     }
   }
+}
+
+/** Following a block that starts before the previous one ends buys and copies the same bytes again for each cue. */
+function disjointEnd(located: readonly (LocatedBlock | null)[], from: number): number {
+  let end = from;
+  for (const block of located) {
+    if (block === null) continue;
+    if (block.blockAt < end) throw new RefusalError("unreadable");
+    end = block.outer.next;
+  }
+  return end;
 }
 
 /** A cue not read by its own time has its cluster's head bought. */
