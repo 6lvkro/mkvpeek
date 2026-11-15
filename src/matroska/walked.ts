@@ -23,7 +23,7 @@ import type { CuePosition } from "./cues.js";
 import { ID } from "./ids.js";
 
 /** The cluster a walk takes over at from another read, and the body offset its blocks must lie past. */
-export type WalkFrom = Pick<CuePosition, "clusterPos" | "relPos">;
+type WalkFrom = Pick<CuePosition, "clusterPos" | "relPos">;
 
 /**
  * Hands over the chosen tracks' frames cluster by cluster, in file order.
