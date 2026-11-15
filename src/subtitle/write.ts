@@ -52,7 +52,7 @@ export function subtitleFile(track: Track, frames: readonly Frame[]): SubtitleFi
   const draft = draftOf(track, assembly);
   const route = routed([draft]);
   for (const frame of frames) route(frame);
-  draft.end();
+  draft.assembler.end?.();
   return pieceOf(draft);
 }
 
@@ -121,10 +121,8 @@ interface Assembly {
 interface Draft {
   track: Track;
   format: SubtitleFormat;
-  add(frame: Frame): void;
-  end(): void;
-  drain(): Bytes;
-  waiting(): number;
+  assembler: Assembler;
+  out: Spool;
 }
 
 const TEXTUAL: Readonly<Record<SubtitleFormat, boolean>> = {
@@ -179,16 +177,7 @@ function formatsNamed(formats: Iterable<SubtitleFormat>): ReadonlySet<SubtitleFo
 function draftOf(track: Track, assembly: Assembly): Draft {
   const out = new Spool();
   const assembler = assembly.start(out);
-  const add = (frame: Frame) => assembler.add(frame);
-  const end = () => assembler.end?.();
-  return {
-    track,
-    format: assembly.format,
-    add,
-    end,
-    drain: () => out.drain(),
-    waiting: () => out.waiting,
-  };
+  return { track, format: assembly.format, assembler, out };
 }
 
 function assemblyOf(track: Track): Assembly | null {
@@ -229,14 +218,14 @@ async function* pieced(
   const handed = new Set<Draft>();
   for await (const frame of frames) {
     const draft = route(frame);
-    if (draft === null || draft.waiting() < pieceBytes) continue;
+    if (draft === null || draft.out.waiting < pieceBytes) continue;
     handed.add(draft);
     yield pieceOf(draft);
   }
   for (const draft of drafts) {
-    draft.end();
+    draft.assembler.end?.();
     // A track that handed over nothing still comes out as one empty piece.
-    if (draft.waiting() > 0 || !handed.has(draft)) yield pieceOf(draft);
+    if (draft.out.waiting > 0 || !handed.has(draft)) yield pieceOf(draft);
   }
 }
 
@@ -244,11 +233,11 @@ function routed(drafts: readonly Draft[]): (frame: Frame) => Draft | null {
   const byIndex = new Map(drafts.map((draft) => [draft.track.index, draft]));
   return (frame) => {
     const draft = byIndex.get(frame.trackIndex) ?? null;
-    if (draft !== null && frame.data.length > 0) draft.add(frame);
+    if (draft !== null && frame.data.length > 0) draft.assembler.add(frame);
     return draft;
   };
 }
 
 function pieceOf(draft: Draft): SubtitlePiece {
-  return { track: draft.track, format: draft.format, bytes: draft.drain() };
+  return { track: draft.track, format: draft.format, bytes: draft.out.drain() };
 }
