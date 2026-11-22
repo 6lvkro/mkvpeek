@@ -109,14 +109,14 @@ try {
 
 ## Compared with FFmpeg
 
-Output is verified against ffprobe and ffmpeg, with four deliberate exceptions.
+Output is verified against ffprobe and ffmpeg, and differs from theirs only by these rules.
 
-- **A track that states no `language`:** ffprobe emits `eng`; the package emits `null`.
-- **A frame that states no `duration`, or zero:** ffmpeg may fill one in from a later frame; the package emits `null` or `0`.
-- **A WebVTT block that does not split the way ffmpeg splits one:** ffmpeg drops the cue; the package keeps it.
-- **Media that does not start where the first cluster does:** every timestamp differs from ffmpeg's by that gap.
+- **What the file states comes out as stated.** A value it leaves out is the spec's default, or `null` where the spec has none, never one taken from a later frame the way ffmpeg may fill a missing duration; a frame ffmpeg cannot parse, such as a WebVTT block it cannot split, is kept whole. `language` alone takes no default: a track that states none has `null`, where ffprobe has `eng`.
+- **Time counts from the first cluster in a file with a video, audio or complex track,** where ffmpeg counts from the earliest packet of any stream, so every timestamp can differ from ffmpeg's by that gap. Other files keep the times they store, as ffmpeg does.
+- **Text is written as UTF-8.** Each invalid sequence a track stores becomes U+FFFD, where ffmpeg writes the bytes as stored.
+- **By default the index trusts the file's `Cues`,** reading only what they point at. A short list then hides frames and a wrong `CueTime` misdates them; `strict` trusts neither.
 
-Anything else the spec defines that a served read distorts or loses is a bug, apart from what a short `Cues` list hides or a wrong `CueTime` misdates by default; under `strict`, only these four remain.
+Anything else the spec defines that a served read distorts or loses is a bug.
 
 ## License
 
