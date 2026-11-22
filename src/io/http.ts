@@ -48,6 +48,11 @@ export async function urlSource(
     stallMs !== null && stallMs !== undefined && Number.isFinite(stallMs) && stallMs > 0
       ? stallMs
       : null;
+  // Chrome queues concurrent Range requests to one URL behind its cache entry unless they skip the cache.
+  // On Node, which has no cache, the mode would only add Cache-Control and Pragma to each request.
+  const pastCache = BROWSER_SCOPES.some((scope) => scope in globalThis)
+    ? { cache: "no-store" as const }
+    : {};
   // Skipping hops would hand a caller's fetch a URL other than the string given,
   // so then where a redirect led is not remembered.
   let landing: Hop | null = null;
@@ -97,7 +102,11 @@ export async function urlSource(
       const sent = new Headers(hop.headers);
       const range = `bytes=${String(from)}-${String(to)}`;
       sent.set("Range", range);
-      const init = { ...(dog.signal === undefined ? {} : { signal: dog.signal }), headers: sent };
+      const init = {
+        headers: sent,
+        ...pastCache,
+        ...(dog.signal === undefined ? {} : { signal: dog.signal }),
+      };
       const target = hop === start ? url : hop.url.href;
       const response = await send(target, init);
       const reader = response.body?.getReader();
@@ -231,6 +240,8 @@ const CROSS_ORIGIN_STRIPPED_HEADERS: ReadonlySet<string> = new Set([
 ]);
 
 const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set(["host", "range", "accept-encoding"]);
+
+const BROWSER_SCOPES = ["document", "DedicatedWorkerGlobalScope", "SharedWorkerGlobalScope"];
 
 const { setImmediate: nextTurn } = globalThis as {
   setImmediate?: (callback: (value: unknown) => void) => unknown;
