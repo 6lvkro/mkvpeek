@@ -3,12 +3,18 @@ import { abortReason, givenSignal, linkedSignal } from "./abort.js";
 import { available, HEAD_BYTES, lend, type Source } from "./source.js";
 
 export interface UrlOptions {
-  /** Sent with every request, but for Host, Range and Accept-Encoding, which the transport owns. */
+  /**
+   * Sent with every request, but for Host, Range and Accept-Encoding, which the transport owns.
+   *
+   * A redirect to another origin drops Authorization, Cookie and Proxy-Authorization, as fetch does.
+   */
   headers?: Readonly<Record<string, string>>;
   /**
    * The client every request goes through, for a host that needs HTTP/2, a proxy or a pinned certificate.
    *
    * It is handed the URL as the string given.
+   *
+   * @defaultValue globalThis.fetch
    */
   fetch?: typeof globalThis.fetch;
   /**

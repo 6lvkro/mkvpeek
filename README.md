@@ -86,6 +86,7 @@ const { tracks } = await peekTracks(source);
 ## Constraints
 
 - Frames are read from subtitle tracks only.
+- A WebVTT track as mkvmerge writes it (`S_TEXT/WEBVTT`) is read without the settings and identifier each cue keeps beside its text, and is not written to a file.
 - Of the encodings a track's frames can be stored in, it undoes `zlib` and `header stripping`, and refuses any other.
 - A server has to answer a Range request with 206.
 - On a high-latency link the cluster-by-cluster `walk` loses its speed to round trips; downloading the file once and passing the bytes can be faster.

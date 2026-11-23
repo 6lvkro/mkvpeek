@@ -24,7 +24,7 @@ export interface Source {
   read(at: number, length: number, into?: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>;
   /** Never called on a source handed in. Whoever opened a source closes it. */
   close?(): Promise<void>;
-  /** A source that states none is read as `remote`. */
+  /** @defaultValue "remote" */
   trip?: Trip;
 }
 
@@ -45,13 +45,13 @@ export interface Range {
 }
 
 export interface IndexFetch {
-  /** Two ranges closer than this are fetched as one, gap included. */
+  /** Two ranges at most this far apart are fetched as one, gap included, in a span no wider than `MAX_SPAN_BYTES`. */
   readonly gapBytes: number;
   readonly concurrency: number;
 }
 
 export interface WalkFetch {
-  /** How far past a block the walk reads ahead when it reads that block. */
+  /** How wide a read the walk makes from where it lacks bytes, cut at the cluster's end. */
   readonly blockAheadBytes: number;
   readonly concurrency: number;
 }

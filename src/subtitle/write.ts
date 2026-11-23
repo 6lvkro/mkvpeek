@@ -18,17 +18,19 @@ export interface SubtitleOptions extends FrameOptions {
    */
   formats?: readonly SubtitleFormat[];
   /**
-   * The tracks written out, every one `container.tracks` lists unless named.
+   * The tracks to choose from.
    *
    * A track the container does not list is a TypeError.
+   *
+   * @defaultValue every one `container.tracks` lists
    */
   tracks?: readonly Track[];
 }
 
 /**
- * The format `subtitleFile` writes a track in, one of ASS, SSA, SubRip, WebVTT, or a PGS track's .sup.
+ * The format `subtitleFile` writes a track in, one of ASS, SSA, SubRip, WebM's WebVTT, or a PGS track's .sup.
  *
- * Null for any other track, such as VobSub, a codec it does not know,
+ * Null for any other track, such as VobSub, the `S_TEXT/WEBVTT` mkvmerge writes, a codec it does not know,
  * or a SubStation track whose `codecPrivate` is null.
  */
 export function subtitleFormat(track: Track): SubtitleFormat | null {
@@ -59,7 +61,7 @@ export function subtitleFile(track: Track, frames: readonly Frame[]): SubtitleFi
 /**
  * Writes out every track of `tracks` whose format `formats` names and that `readable` answers true for, from one read.
  *
- * It writes nothing where that read is refused.
+ * Where that read is refused, it throws the `RefusalError` and hands over no file.
  *
  * @example
  * for (const { track, format, bytes } of await subtitleFiles(container)) use(track, format, bytes);
@@ -80,6 +82,8 @@ export async function subtitleFiles(
  * Null where `subtitleFormat` is.
  *
  * - It may hold a frame's bytes until the frames end, so the frame's buffer stays as given until then.
+ * - The example's `walk` holds no Cues index, so streaming takes less memory.
+ * - Where `frames` is refused, `bytes` throws the refusal after what it already handed over.
  *
  * @example
  * const sub = subtitleStream(track, container.frames([track], { via: "walk" }));
@@ -100,7 +104,8 @@ export function subtitleStream(
 /**
  * Writes out the tracks `subtitleFiles` would, in pieces as `subtitleStream` does, from one read.
  *
- * A track's pieces come in order, between other tracks' pieces.
+ * A track's pieces come in order, between other tracks' pieces,
+ * and a refusal can follow pieces already handed over.
  *
  * @example
  * for await (const { track, format, bytes } of subtitleStreams(container)) use(track, format, bytes);

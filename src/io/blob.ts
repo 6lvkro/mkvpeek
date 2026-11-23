@@ -1,7 +1,7 @@
 import { available, type Source, type Trip } from "./source.js";
 
 export interface BlobOptions {
-  /** Unset, `local`. */
+  /** @defaultValue "local" */
   trip?: Trip;
 }
 

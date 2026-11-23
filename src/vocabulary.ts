@@ -22,7 +22,7 @@ export interface Track<T extends TrackType = TrackType> {
   flags: TrackFlags;
   /** Frame times already account for the largest CodecDelay any track states. */
   codecDelayNs: number;
-  /** The SimpleTags of every Tag that targets this track's TrackUID. */
+  /** The SimpleTags of every Tag whose last TagTrackUID in Targets is this track's, where ffprobe attaches them too. */
   tags: TrackTag[];
 }
 

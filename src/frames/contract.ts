@@ -16,12 +16,15 @@ export interface Frame {
  * throws a TypeError when `frames` is called.
  */
 export interface FrameOptions extends FrameTuning, Abortable {
+  /** @defaultValue "both" */
   via?: FrameVia;
   /**
    * Reads by the index only a track that states its frame count,
    * and dates every frame by its cluster's own timestamp rather than its cue's.
    *
    * A track it cannot prove whole goes to the walk under `both`, and is refused under `index`.
+   *
+   * @defaultValue false
    */
   strict?: boolean;
   /**
@@ -49,14 +52,17 @@ export interface FrameOptions extends FrameTuning, Abortable {
 
 /** What a caller can say about the cost of a read. */
 export interface FrameTuning {
+  /** @defaultValue "balanced" */
   preset?: FramePreset;
   /**
-   * Concurrent range requests on the index path, and lanes on the walk.
+   * The requests one read keeps in flight at once.
    *
    * An integer of at least 1, or the call throws a RangeError, and past 64 it is read as 64.
    *
    * On a network path this is the number of open connections,
    * so **mind the target server's socket limit.**
+   *
+   * @defaultValue 16 on the index path, and on the walk the preset's value for the source's trip
    */
   concurrency?: number;
 }
@@ -70,12 +76,12 @@ export interface FrameTuning {
  *
  * - `walk`: visits every cluster. Slow, reading block by block, but it answers without an index.
  *
- * - `both`: (default) `index` first, then `walk` wherever the index refused.
+ * - `both`: `index` first, then `walk` wherever the index refused.
  */
 export type FrameVia = "both" | FrameFinder;
 
 /**
- * - `balanced`: (default) the knee of the time-transfer curve
+ * - `balanced`: the knee of the time-transfer curve
  *
  * - `fastest`: minimises time.
  *

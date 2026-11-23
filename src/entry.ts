@@ -13,7 +13,7 @@ import type { Abortable } from "./vocabulary.js";
  * @example
  * // A URL, when the server allows Range requests
  * const { tracks } = await peekTracks(url);
- * const dubbed = tracks.filter((t) => t.type === "audio" && t.language !== null);
+ * const forced = tracks.filter((t) => t.type === "subtitle" && t.flags.forced);
  *
  * @example
  * // Bytes already in memory (an upload body, a queue message)
