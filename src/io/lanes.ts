@@ -8,7 +8,6 @@ type Task = () => Promise<unknown>;
 
 export class HaltableQueue<T> {
   #items: T[] = [];
-  #next = 0;
   #closed = false;
   #halted = false;
   #parked: Array<() => void> = [];
@@ -46,11 +45,7 @@ export class HaltableQueue<T> {
 
   async #take(): Promise<T | null> {
     while (!this.#halted) {
-      if (this.#next < this.#items.length) {
-        const item = this.#items[this.#next] as T;
-        this.#next += 1;
-        return item;
-      }
+      if (this.#items.length > 0) return this.#items.shift() as T;
       if (this.#closed) return null;
       await new Promise<void>((resolve) => {
         this.#parked.push(resolve);
