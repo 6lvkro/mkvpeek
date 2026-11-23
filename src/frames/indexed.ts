@@ -2,7 +2,7 @@ import { isGrammarError, type Window } from "../ebml.js";
 import { stopIfAborted, type Watch } from "../io/abort.js";
 import { gathered } from "../io/lanes.js";
 import { available, type IndexFetch, type Range, type SizedSource } from "../io/source.js";
-import { coalesceAcross, fetchSpans, StoneIndex, WindowIndex } from "../io/windows.js";
+import { coalesceAcross, fetchSpans, holds, StoneIndex, WindowIndex } from "../io/windows.js";
 import { plainFrame, undoneFrame } from "../matroska/block.js";
 import { CLUSTER_PROBE_BYTES } from "../matroska/chain.js";
 import type { CueIndex, CuePosition } from "../matroska/cues.js";
@@ -134,7 +134,7 @@ const NO_STONES = new StoneIndex([]);
 const unheld = (ranges: readonly Range[], head: Window): Range[] =>
   ranges.flatMap((range) => {
     const length = available(range.at, range.length, head.fileSize);
-    if (length === 0 || range.at + length <= head.bytes.length) return [];
+    if (length === 0 || holds(head, range.at, length)) return [];
     return [{ at: range.at, length }];
   });
 
