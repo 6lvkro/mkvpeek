@@ -33,11 +33,11 @@ npm install mkvpeek
 Node 22.1 or later, no other dependencies.
 In the browser, `mkvpeek/browser` is the same reader minus file paths.
 
-| Reads | Chrome, Edge | Firefox | Safari |
-| --- | --- | --- | --- |
-| bytes or a `File` | 98 | 97 | 15.4 |
-| a URL | 126 | 126 | 18 |
-| a track compressed with zlib | 98 | 113 | 16.4 |
+| Reads                        | Chrome, Edge | Firefox | Safari |
+| ---------------------------- | ------------ | ------- | ------ |
+| bytes or a `File`            | 98           | 97      | 15.4   |
+| a URL                        | 126          | 126     | 18     |
+| a track compressed with zlib | 98           | 113     | 16.4   |
 
 ## Usage
 
